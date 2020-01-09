@@ -1,0 +1,51 @@
+From 7c324594aedc9b43445d75e2fbad5a4bc2462887 Mon Sep 17 00:00:00 2001
+From: Adheer Chandravanshi <adheer.chandravanshi@qlogic.com>
+Date: Tue, 8 Dec 2015 06:23:33 +0530
+Subject: [PATCH] iscsiadm: let ping be tried after iface config is initialized
+
+The ping should be tried after the iface config is initialized by iscsiuio
+
+Signed-off-by: Adheer Chandravanshi <adheer.chandravanshi@qlogic.com>
+---
+ usr/iscsiadm.c   | 2 +-
+ usr/iscsid_req.c | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/usr/iscsiadm.c b/usr/iscsiadm.c
+index f28ed10..a00e990 100644
+--- a/usr/iscsiadm.c
++++ b/usr/iscsiadm.c
+@@ -3194,7 +3194,7 @@ static int exec_ping_op(struct iface_rec *iface, char *ip, int size, int count,
+ 			}
+ 
+ 			rc = iscsi_set_net_config(t, NULL, iface);
+-			if (rc)
++			if (rc && (rc != ISCSI_ERR_AGAIN))
+ 				goto ping_err;
+ 
+ 			rc = t->template->exec_ping(t, iface, size, &addr,
+diff --git a/usr/iscsid_req.c b/usr/iscsid_req.c
+index ab097d0..d5e68f6 100644
+--- a/usr/iscsid_req.c
++++ b/usr/iscsid_req.c
+@@ -259,7 +259,7 @@ int uip_broadcast(void *buf, size_t buf_len, int fd_flags, uint32_t *status)
+ 		return ISCSI_ERR;
+ 	}
+ 
+-#define MAX_UIP_BROADCAST_READ_TRIES 3
++#define MAX_UIP_BROADCAST_READ_TRIES 5
+ 	for (count = 0; count < MAX_UIP_BROADCAST_READ_TRIES; count++) {
+ 		/*  Wait for the response */
+ 		err = read(fd, &rsp, sizeof(rsp));
+@@ -270,7 +270,7 @@ int uip_broadcast(void *buf, size_t buf_len, int fd_flags, uint32_t *status)
+ 			err = 0;
+ 			break;
+ 		} else if ((err == -1) && (errno == EAGAIN)) {
+-			usleep(250000);
++			usleep(1000000);
+ 			continue;
+ 		} else {
+ 			log_error("Could not read response (%d/%d), daemon "
+-- 
+2.5.5
+

@@ -1,0 +1,276 @@
+From bb5a6e1533c35fe74d7ec7f8fa850e7630139b06 Mon Sep 17 00:00:00 2001
+From: Adheer Chandravanshi <adheer.chandravanshi@qlogic.com>
+Date: Fri, 18 Sep 2015 06:38:50 -0400
+Subject: [PATCH] iscsid: Changes to support ping through iscsiuio
+
+These changes are done in order to support ping operation for drivers
+like bnx2i that use iscsiuio.
+
+Signed-off-by: Adheer Chandravanshi <adheer.chandravanshi@qlogic.com>
+---
+ usr/iscsiadm.c     | 28 ++++++++++++++++++++++++----
+ usr/iscsid_req.c   | 37 ++++++++++++++++++++++++++++++++-----
+ usr/iscsid_req.h   |  3 ++-
+ usr/transport.c    |  1 +
+ usr/transport.h    |  3 +++
+ usr/uip_mgmt_ipc.c | 39 ++++++++++++++++++++++++++++++++++++++-
+ usr/uip_mgmt_ipc.h | 13 +++++++++++++
+ 7 files changed, 113 insertions(+), 11 deletions(-)
+
+diff --git a/usr/iscsiadm.c b/usr/iscsiadm.c
+index a549ae7..f28ed10 100644
+--- a/usr/iscsiadm.c
++++ b/usr/iscsiadm.c
+@@ -3112,6 +3112,7 @@ static int exec_ping_op(struct iface_rec *iface, char *ip, int size, int count,
+ 	struct iscsi_transport *t = NULL;
+ 	uint32_t host_no, status = 0;
+ 	struct sockaddr_storage addr;
++	struct host_info hinfo;
+ 	int i;
+ 
+ 	if (!iface) {
+@@ -3180,13 +3181,32 @@ static int exec_ping_op(struct iface_rec *iface, char *ip, int size, int count,
+ 	for (i = 1; i <= count; i++) {
+ 		/*
+ 		 * To support drivers like bnx2i that do not use
+-		 * the iscsi if to send a ping, we can add a transport
++		 * the iscsi iface to send a ping, we invoke transport
+ 		 * callout here.
+ 		 */
+ 		status = 0;
+-		rc = ipc->exec_ping(t->handle, host_no,
+-				    (struct sockaddr *)&addr, iface->iface_num,
+-				    iface_type, size, &status);
++		if (t->template->exec_ping) {
++			if (!strlen(iface->netdev)) {
++				memset(&hinfo, 0, sizeof(hinfo));
++				hinfo.host_no = host_no;
++				iscsi_sysfs_get_hostinfo_by_host_no(&hinfo);
++				strcpy(iface->netdev, hinfo.iface.netdev);
++			}
++
++			rc = iscsi_set_net_config(t, NULL, iface);
++			if (rc)
++				goto ping_err;
++
++			rc = t->template->exec_ping(t, iface, size, &addr,
++						    &status);
++		} else {
++			rc = ipc->exec_ping(t->handle, host_no,
++					    (struct sockaddr *)&addr,
++					    iface->iface_num, iface_type,
++					    (uint32_t)size, &status);
++		}
++
++ping_err:
+ 		if (!rc && !status)
+ 			printf("Ping %d completed\n", i);
+ 		else if (status)
+diff --git a/usr/iscsid_req.c b/usr/iscsid_req.c
+index 3e7826c..ab097d0 100644
+--- a/usr/iscsid_req.c
++++ b/usr/iscsid_req.c
+@@ -215,7 +215,7 @@ static int uip_connect(int *fd)
+ 	return ipc_connect(fd, ISCSID_UIP_NAMESPACE, 0);
+ }
+ 
+-int uip_broadcast(void *buf, size_t buf_len)
++int uip_broadcast(void *buf, size_t buf_len, int fd_flags, uint32_t *status)
+ {
+ 	int err;
+ 	int fd;
+@@ -247,7 +247,11 @@ int uip_broadcast(void *buf, size_t buf_len)
+ 	flags = fcntl(fd, F_GETFL, 0);
+ 	if (flags == -1)
+ 		flags = 0;
+-	err = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
++
++	if (fd_flags)
++		flags |= fd_flags;
++
++	err = fcntl(fd, F_SETFL, flags);
+ 	if (err) {
+ 		log_error("could not set uip broadcast to non-blocking: %d",
+ 			  errno);
+@@ -280,11 +284,34 @@ int uip_broadcast(void *buf, size_t buf_len)
+ 		log_error("Could not broadcast to uIP after %d tries",
+ 			  count);
+ 		err = ISCSI_ERR_AGAIN;
+-	} else if (rsp.err != ISCSID_UIP_MGMT_IPC_DEVICE_UP) {
+-		log_debug(3, "Device is not ready\n");
+-		err = ISCSI_ERR_AGAIN;
+ 	}
+ 
++	if (err)
++		goto done;
++
++	switch (rsp.command) {
++	case ISCSID_UIP_IPC_GET_IFACE:
++		if (rsp.err != ISCSID_UIP_MGMT_IPC_DEVICE_UP) {
++			log_debug(3, "Device is not ready\n");
++			err = ISCSI_ERR_AGAIN;
++		}
++
++		break;
++	case ISCSID_UIP_IPC_PING:
++		*status = rsp.ping_sc;
++		if (rsp.err == ISCSID_UIP_MGMT_IPC_DEVICE_INITIALIZING) {
++			log_debug(3, "Device is not ready\n");
++			err = ISCSI_ERR_AGAIN;
++		} else if (*status) {
++			err = ISCSI_ERR;
++		}
++
++		break;
++	default:
++		err = ISCSI_ERR;
++	}
++
++done:
+ 	close(fd);
+ 	return err;
+ }
+diff --git a/usr/iscsid_req.h b/usr/iscsid_req.h
+index 4fff43d..8cb4a92 100644
+--- a/usr/iscsid_req.h
++++ b/usr/iscsid_req.h
+@@ -33,6 +33,7 @@ extern int iscsid_req_by_rec(int cmd, struct node_rec *rec);
+ extern int iscsid_req_by_sid_async(int cmd, int sid, int *fd);
+ extern int iscsid_req_by_sid(int cmd, int sid);
+ 
+-extern int uip_broadcast(void *buf, size_t buf_len);
++extern int uip_broadcast(void *buf, size_t buf_len, int fd_flags,
++			 uint32_t *status);
+ 
+ #endif
+diff --git a/usr/transport.c b/usr/transport.c
+index 64f3353..1d79a68 100644
+--- a/usr/transport.c
++++ b/usr/transport.c
+@@ -82,6 +82,7 @@ struct iscsi_transport_template bnx2i = {
+ 	.ep_poll	= ktransport_ep_poll,
+ 	.ep_disconnect	= ktransport_ep_disconnect,
+ 	.set_net_config = uip_broadcast_params,
++	.exec_ping	= uip_broadcast_ping_req,
+ };
+ 
+ struct iscsi_transport_template be2iscsi = {
+diff --git a/usr/transport.h b/usr/transport.h
+index 388e4b1..6015e04 100644
+--- a/usr/transport.h
++++ b/usr/transport.h
+@@ -39,6 +39,9 @@ struct iscsi_transport_template {
+ 	int (*set_net_config) (struct iscsi_transport *t,
+ 			       struct iface_rec *iface,
+ 			       struct iscsi_session *session);
++	int (*exec_ping) (struct iscsi_transport *t,
++			  struct iface_rec *iface, int datalen,
++			  struct sockaddr_storage *dst_addr, uint32_t *status);
+ };
+ 
+ /* represents data path provider */
+diff --git a/usr/uip_mgmt_ipc.c b/usr/uip_mgmt_ipc.c
+index f3074ee..56f298d 100644
+--- a/usr/uip_mgmt_ipc.c
++++ b/usr/uip_mgmt_ipc.c
+@@ -15,10 +15,12 @@
+  */
+ 
+ #include <string.h>
++#include <fcntl.h>
+ 
+ #include "log.h"
+ #include "uip_mgmt_ipc.h"
+ #include "iscsid_req.h"
++#include "iscsi_err.h"
+ 
+ int uip_broadcast_params(struct iscsi_transport *t,
+ 			 struct iface_rec *iface,
+@@ -37,5 +39,40 @@ int uip_broadcast_params(struct iscsi_transport *t,
+ 
+ 	return uip_broadcast(&broadcast,
+ 			     sizeof(iscsid_uip_broadcast_header_t) +
+-			     sizeof(*iface));
++			     sizeof(*iface), O_NONBLOCK, NULL);
++}
++
++int uip_broadcast_ping_req(struct iscsi_transport *t,
++			   struct iface_rec *iface, int datalen,
++			   struct sockaddr_storage *dst_addr, uint32_t *status)
++{
++	struct iscsid_uip_broadcast broadcast;
++	int len = 0;
++
++	log_debug(3, "broadcasting ping request to uip\n");
++
++	memset(&broadcast, 0, sizeof(broadcast));
++
++	broadcast.header.command = ISCSID_UIP_IPC_PING;
++	len = sizeof(*iface) + sizeof(*dst_addr) + sizeof(datalen);
++	broadcast.header.payload_len = len;
++
++	memcpy(&broadcast.u.ping_rec.ifrec, iface, sizeof(*iface));
++
++	if (dst_addr->ss_family == PF_INET) {
++		len = sizeof(struct sockaddr_in);
++	} else if (dst_addr->ss_family == PF_INET6) {
++		len = sizeof(struct sockaddr_in6);
++	} else {
++		log_error("%s unknown addr family %d\n",
++			  __FUNCTION__, dst_addr->ss_family);
++		return ISCSI_ERR_INVAL;
++	}
++
++	memcpy(&broadcast.u.ping_rec.ipaddr, dst_addr, len);
++	broadcast.u.ping_rec.datalen = datalen;
++
++	return uip_broadcast(&broadcast,
++			     sizeof(iscsid_uip_broadcast_header_t) +
++			     broadcast.header.payload_len, 0, status);
+ }
+diff --git a/usr/uip_mgmt_ipc.h b/usr/uip_mgmt_ipc.h
+index 29a4769..916113d 100644
+--- a/usr/uip_mgmt_ipc.h
++++ b/usr/uip_mgmt_ipc.h
+@@ -29,6 +29,7 @@
+ typedef enum iscsid_uip_cmd {
+ 	ISCSID_UIP_IPC_UNKNOWN			= 0,
+ 	ISCSID_UIP_IPC_GET_IFACE		= 1,
++	ISCSID_UIP_IPC_PING			= 2,
+ 
+ 	__ISCSID_UIP_IPC_MAX_COMMAND
+ } iscsid_uip_cmd_e;
+@@ -47,6 +48,13 @@ typedef struct iscsid_uip_broadcast {
+ 		struct ipc_broadcast_iface_rec {
+ 			struct iface_rec rec;
+ 		} iface_rec;
++
++		struct ipc_broadcast_ping_rec {
++			struct iface_rec ifrec;
++			struct sockaddr_storage ipaddr;
++			int datalen;
++			int *status;
++		} ping_rec;
+ 	} u;
+ } iscsid_uip_broadcast_t;
+ 
+@@ -63,11 +71,16 @@ typedef enum iscsid_uip_mgmt_ipc_err {
+ typedef struct iscsid_uip_mgmt_rsp {
+ 	iscsid_uip_cmd_e command;
+ 	iscsid_uip_mgmt_ipc_err_e err;
++	enum iscsi_ping_status_code ping_sc;
+ } iscsid_uip_rsp_t;
+ 
+ extern int uip_broadcast_params(struct iscsi_transport *t,
+ 				struct iface_rec *iface,
+ 				struct iscsi_session *session);
+ 
++extern int uip_broadcast_ping_req(struct iscsi_transport *t,
++				  struct iface_rec *iface, int datalen,
++				  struct sockaddr_storage *dst_addr,
++				  uint32_t *status);
+ 
+ #endif /* UIP_MGMT_IPC_H */
+-- 
+2.5.5
+

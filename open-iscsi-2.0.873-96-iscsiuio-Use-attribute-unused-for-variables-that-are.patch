@@ -1,0 +1,45 @@
+From e2c9c585d9b67d117238833af974f480888edeb1 Mon Sep 17 00:00:00 2001
+From: Andy Grover <agrover@redhat.com>
+Date: Tue, 7 Oct 2014 11:38:18 -0700
+Subject: [PATCH] iscsiuio: Use attribute(unused) for variables that are unused
+ but needed
+
+These variables need to exist even if they're not used. In order to prevent
+gcc from issuing a warning about set but unused variables, annotate them
+with __attribute__((__unused__)).
+
+Signed-off-by: Andy Grover <agrover@redhat.com>
+---
+ iscsiuio/src/uip/pt.h          | 2 +-
+ iscsiuio/src/unix/libs/bnx2x.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/iscsiuio/src/uip/pt.h b/iscsiuio/src/uip/pt.h
+index 87465b4..ffb1d15 100644
+--- a/iscsiuio/src/uip/pt.h
++++ b/iscsiuio/src/uip/pt.h
+@@ -111,7 +111,7 @@ struct pt {
+  *
+  * \hideinitializer
+  */
+-#define PT_BEGIN(pt) { char PT_YIELD_FLAG = 1; LC_RESUME((pt)->lc)
++#define PT_BEGIN(pt) { char PT_YIELD_FLAG __attribute__((__unused__)) = 1; LC_RESUME((pt)->lc)
+ 
+ /**
+  * Declare the end of a protothread.
+diff --git a/iscsiuio/src/unix/libs/bnx2x.c b/iscsiuio/src/unix/libs/bnx2x.c
+index 1268975..1495762 100644
+--- a/iscsiuio/src/unix/libs/bnx2x.c
++++ b/iscsiuio/src/unix/libs/bnx2x.c
+@@ -443,7 +443,7 @@ static void bnx2x_doorbell(bnx2x_t *bp, __u32 off, __u32 val)
+ 
+ static void bnx2x_flush_doorbell(bnx2x_t *bp, __u32 off)
+ {
+-	volatile __u32 tmp;
++	volatile __u32 tmp __attribute__((__unused__));
+ 
+ 	barrier();
+ 	tmp = *((volatile __u32 *)(bp->reg2 + off));
+-- 
+2.5.0
+

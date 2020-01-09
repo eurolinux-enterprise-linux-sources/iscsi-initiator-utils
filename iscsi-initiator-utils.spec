@@ -3,7 +3,7 @@
 Summary: iSCSI daemon and utility programs
 Name: iscsi-initiator-utils
 Version: 6.2.0.873
-Release: 14%{?dist}
+Release: 21%{?dist}
 Source0: http://people.redhat.com/mchristi/iscsi/rhel6.0/source/open-iscsi-2.0-872-rc4-bnx2i.tar.gz
 Source1: iscsid.init
 Source2: iscsidevs.init
@@ -57,6 +57,31 @@ Patch30: iscsi-initiator-utils-iscsiuio-revert-Fixed-a-pthread-resc-leak.patch
 Patch31: iscsi-initiator-utils-initialize-param-count.patch
 Patch32: iscsi-initiator-utils-iscsid-safe-session-logout.patch
 Patch33: iscsi-initiator-utils-libmount-stubs-for-rhel6.patch
+Patch34: iscsistart-vlan-network-setup.patch
+Patch35: open-iscsi-2.0.873-117-guard-against-NULL-ptr-during-discovery-from-unexpec.patch
+# 6.8 iscsiuio updates
+Patch50: open-iscsi-2.0.873-80-iscsiuio-Rebranding-iscsiuio.patch
+Patch51: open-iscsi-2.0.873-92-iscsiuio-Fix-warning-about-non-matching-types.patch
+Patch52: open-iscsi-2.0.873-93-iscsiuio-Fix-strict-aliasing-warning-with-struct-mac.patch
+Patch53: open-iscsi-2.0.873-94-iscsiuio-Resolve-strict-aliasing-issue-in-iscsiuio-s.patch
+Patch54: open-iscsi-2.0.873-95-iscsiuio-Fix-aliasing-issue-with-IPV6_IS_ADDR_UNSPEC.patch
+Patch55: open-iscsi-2.0.873-96-iscsiuio-Use-attribute-unused-for-variables-that-are.patch
+Patch56: open-iscsi-2.0.873-97-iscsiuio-Use-attribute-unused-for-icmpv6_hdr.patch
+Patch57: open-iscsi-2.0.873-98-iscsiuio-Change-nic_disable-to-return-void.patch
+Patch58: open-iscsi-2.0.873-99-iscsiuio-Remove-set-but-unused-variables.patch
+Patch59: open-iscsi-2.0.873-100-iscsiuio-Check-return-value-from-nic_queue_tx_packet.patch
+Patch60: open-iscsi-2.0.873-120-iscsiuio-CFLAGS-fixes.patch
+Patch61: open-iscsi-2.0.873-135-iscsiuio-Correct-the-handling-of-Multi-Function-mode.patch
+Patch62: open-iscsi-2.0.873-137-ARP-table-too-small-when-switches-involved.patch
+Patch63: open-iscsi-libiscsi-vlan-id.patch
+Patch64: open-iscsi-2.0.873-138-use-24-bits-of-ISID-qualifier-space-instead-of-only-.patch
+Patch65: open-iscsi-2.0.873-157-remove-sysfs-attr_list.patch
+Patch66: open-iscsi-2.0.873-148-iscsid-Changes-to-support-ping-through-iscsiuio.patch
+Patch67: open-iscsi-2.0.873-149-iscsiuio-Add-ping-support-through-iscsiuio.patch
+Patch68: open-iscsi-2.0.873-150-iscsiadm-let-ping-be-tried-after-iface-config-is-ini.patch
+Patch69: open-iscsi-2.0.873-151-iscsiuio-Wait-for-iface-to-be-ready-before-issuing-t.patch
+Patch70: open-iscsi-2.0.873-152-iscsiuio-Get-the-library-to-use-based-on-uio-sysfs-n.patch
+Patch71: open-iscsi-2.0.873-iscsiuio-autoreconf.patch
 # add rhel version info to iscsi tools
 Patch90: iscsi-initiator-utils-add-rh-ver.patch
 
@@ -117,6 +142,30 @@ developing applications that use %{name}.
 %patch31 -p1
 %patch32 -p1
 %patch33 -p1
+%patch34 -p1
+%patch35 -p1
+%patch50 -p1
+%patch51 -p1
+%patch52 -p1
+%patch53 -p1
+%patch54 -p1
+%patch55 -p1
+%patch56 -p1
+%patch57 -p1
+%patch58 -p1
+%patch59 -p1
+%patch60 -p1
+%patch61 -p1
+%patch62 -p1
+%patch63 -p1
+%patch64 -p1
+%patch65 -p1
+%patch66 -p1
+%patch67 -p1
+%patch68 -p1
+%patch69 -p1
+%patch70 -p1
+%patch71 -p1
 %patch90 -p1 -b .add-rh-ver
 
 %build
@@ -243,6 +292,31 @@ fi
 %{_includedir}/libiscsi.h
 
 %changelog
+* Mon Mar 28 2016 Chris Leech <cleech@redhat.com> - 6.2.0.873-21
+- 1294965 iscsiuio match based on driver to support new hardware without
+  adding PCI IDs (still need IDs added to kernel)
+- bnx2i pass through ping support
+
+* Thu Mar 10 2016 Chris Leech <cleech@redhat.com> - 6.2.0.873-20
+- 1314926 return NULL for no attr instead of an empty string
+
+* Mon Feb 29 2016 Chris Leech <cleech@redhat.com> - 6.2.0.873-19
+- 1309724 fix regression in ibft sysfs reading
+
+* Wed Feb 17 2016 Chris Leech <cleech@redhat.com> - 6.2.0.873-18
+- remove sysfs att_list cache, speed up handling of large number of sessions
+
+* Fri Jan 29 2016 Chris Leech <cleech@redhat.com> - 6.2.0.873-17
+- use 24-bits of ISID space
+
+* Wed Jan 20 2016 Chris Leech <cleech@redhat.com> - 6.2.0.873-16
+- 831002 added vlan id to libiscsi reported network configuration
+
+* Fri Dec 11 2015 Chris Leech <cleech@redhat.com> - 6.2.0.873-15
+- 1125984 iscsistart vlan support
+- 906242 fix segfault from unexpected netlink event during driver load
+- 1181463 iscsiuio update
+
 * Thu Feb 26 2015 Chris Leech <cleech@redhat.com> - 6.2.0.873-14
 - 691746 add safe logout mode to block session logout when devices are mounted
 

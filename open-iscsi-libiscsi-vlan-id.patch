@@ -1,0 +1,51 @@
+From 1ffdfc5f7840b16547e2553957b1ca40f255948f Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@redhat.com>
+Date: Wed, 20 Jan 2016 10:36:00 -0800
+Subject: [PATCH] libiscsi: add vlan id from firmware to exposed network config
+
+provided by Radek Vykydal to enable iSCSI VLAN support in anaconda
+---
+ libiscsi/libiscsi.c                      | 1 +
+ libiscsi/libiscsi.h                      | 1 +
+ libiscsi/tests/test_get_network_config.c | 1 +
+ 3 files changed, 3 insertions(+)
+
+diff --git a/libiscsi/libiscsi.c b/libiscsi/libiscsi.c
+index 523d3d3..6927e4b 100644
+--- a/libiscsi/libiscsi.c
++++ b/libiscsi/libiscsi.c
+@@ -741,6 +741,7 @@ int libiscsi_get_firmware_network_config(
+ 	strncpy(config->gateway, fw_entry.gateway, LIBISCSI_VALUE_MAXLEN);
+ 	strncpy(config->primary_dns, fw_entry.primary_dns, LIBISCSI_VALUE_MAXLEN);
+ 	strncpy(config->secondary_dns, fw_entry.secondary_dns, LIBISCSI_VALUE_MAXLEN);
++	strncpy(config->vlan, fw_entry.vlan, LIBISCSI_VALUE_MAXLEN);
+ 	return 0;
+ }
+ 
+diff --git a/libiscsi/libiscsi.h b/libiscsi/libiscsi.h
+index 1d8ae7c..112838c 100644
+--- a/libiscsi/libiscsi.h
++++ b/libiscsi/libiscsi.h
+@@ -340,6 +340,7 @@ struct libiscsi_network_config {
+     char gateway[LIBISCSI_VALUE_MAXLEN]       /** IP of Default gateway. */;
+     char primary_dns[LIBISCSI_VALUE_MAXLEN]   /** IP of the Primary DNS. */;
+     char secondary_dns[LIBISCSI_VALUE_MAXLEN] /** IP of the Secondary DNS. */;
++    char vlan[LIBISCSI_VALUE_MAXLEN]          /** Vlan id. */;
+ };
+ 
+ /** \brief Get network configuration information from iscsi firmware
+diff --git a/libiscsi/tests/test_get_network_config.c b/libiscsi/tests/test_get_network_config.c
+index 2dedd61..ced3ff2 100644
+--- a/libiscsi/tests/test_get_network_config.c
++++ b/libiscsi/tests/test_get_network_config.c
+@@ -40,6 +40,7 @@ int main(void)
+ 	printf("gate:\t%s\n", config.gateway);
+ 	printf("dns1:\t%s\n", config.primary_dns);
+ 	printf("dns2:\t%s\n", config.secondary_dns);
++	printf("vlan:\t%s\n", config.vlan);
+ 
+ 	return 0;
+ }
+-- 
+2.5.0
+

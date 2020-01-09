@@ -1,0 +1,60 @@
+From cd3d245c5976b76646ad7ca66d59d0354bef65ba Mon Sep 17 00:00:00 2001
+From: Andy Grover <agrover@redhat.com>
+Date: Tue, 7 Oct 2014 11:38:17 -0700
+Subject: [PATCH] iscsiuio: Fix aliasing issue with IPV6_IS_ADDR_UNSPECIFIED
+
+There already is a union to reference the memory as an array of uints, so
+just use it for IS_ADDR_UNSPECIFIED.
+
+Also, all the other #defines aren't used anywhere so we can remove them.
+
+Signed-off-by: Andy Grover <agrover@redhat.com>
+---
+ iscsiuio/src/uip/ipv6.h | 31 +++++--------------------------
+ 1 file changed, 5 insertions(+), 26 deletions(-)
+
+diff --git a/iscsiuio/src/uip/ipv6.h b/iscsiuio/src/uip/ipv6.h
+index 481f3aa..bc63762 100644
+--- a/iscsiuio/src/uip/ipv6.h
++++ b/iscsiuio/src/uip/ipv6.h
+@@ -142,32 +142,11 @@ struct mac_address {
+ 	(memcmp((char *)a, (char *)b, sizeof(struct ipv6_addr)) == 0)
+ 
+ /* Unspecified IPv6 address */
+-#define IPV6_IS_ADDR_UNSPECIFIED(a)		\
+-	((*(u32_t *)(&(a)->addr8[0]) == 0) &&	\
+-	 (*(u32_t *)(&(a)->addr8[4]) == 0) &&	\
+-	 (*(u32_t *)(&(a)->addr8[8]) == 0) &&	\
+-	 (*(u32_t *)(&(a)->addr8[12]) == 0))
+-
+-/* Loopback IPv6 address */
+-#define IPV6_IS_ADDR_LOOPBACK(a)		\
+-	((*(u32_t *)(&(a)->addr8[0]) == 0) &&	\
+-	 (*(u32_t *)(&(a)->addr8[4]) == 0) &&	\
+-	 (*(u32_t *)(&(a)->addr8[8]) == 0) &&	\
+-	 (*(u32_t *)(&(a)->addr8[12]) == 0x1))
+-
+-/* IPv4 compatible */
+-#define IPV6_IS_ADDR_IPV4_COMPAT(a)		\
+-	((*(u32_t *)(&(a)->addr8[0]) == 0) &&	\
+-	 (*(u32_t *)(&(a)->addr8[4]) == 0) &&	\
+-	 (*(u32_t *)(&(a)->addr8[8]) == 0) &&	\
+-	 (*(u32_t *)(&(a)->addr8[12]) != 0) &&	\
+-	 (*(u32_t *)(&(a)->addr8[12]) != 0x1))
+-
+-/* Mapped IPv4-IPv6 address */
+-#define IPV6_IS_ADDR_IPV4_MAPPED(a)		\
+-	((*(u32_t *)(&(a)->addr8[0]) == 0) &&	\
+-	 (*(u32_t *)(&(a)->addr8[4]) == 0) &&	\
+-	 (*(u32_t *)(&(a)->addr8[8]) == ntohl(0x0000ffff)))
++#define IPV6_IS_ADDR_UNSPECIFIED(a)	\
++	((((a)->addr[0]) == 0) &&	\
++	(((a)->addr[1]) == 0) &&	\
++	(((a)->addr[2]) == 0) &&	\
++	(((a)->addr[3]) == 0))
+ 
+ /* IPv6 Scope Values */
+ #define IPV6_ADDR_SCOPE_INTFACELOCAL    0x01	/* Node-local scope */
+-- 
+2.5.0
+

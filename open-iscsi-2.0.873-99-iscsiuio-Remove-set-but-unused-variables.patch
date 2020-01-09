@@ -1,0 +1,112 @@
+From 957ce0b150776d8c48024af1fdd98c0bc4d9b71b Mon Sep 17 00:00:00 2001
+From: Andy Grover <agrover@redhat.com>
+Date: Tue, 7 Oct 2014 11:38:21 -0700
+Subject: [PATCH] iscsiuio: Remove set but unused variables
+
+Signed-off-by: Andy Grover <agrover@redhat.com>
+---
+ iscsiuio/src/uip/uip_arp.c | 2 --
+ iscsiuio/src/unix/main.c   | 3 +--
+ iscsiuio/src/unix/nic.c    | 7 -------
+ iscsiuio/src/unix/packet.c | 5 +----
+ 4 files changed, 2 insertions(+), 15 deletions(-)
+
+diff --git a/iscsiuio/src/uip/uip_arp.c b/iscsiuio/src/uip/uip_arp.c
+index a8de07f..1b3761f 100644
+--- a/iscsiuio/src/uip/uip_arp.c
++++ b/iscsiuio/src/uip/uip_arp.c
+@@ -310,11 +310,9 @@ uip_arp_arpin(nic_interface_t *nic_iface,
+ dest_ipv4_addr_t
+ uip_determine_dest_ipv4_addr(struct uip_stack *ustack, u16_t *ipaddr)
+ {
+-	struct arp_hdr *arp;
+ 	struct uip_eth_hdr *eth;
+ 	struct ip_hdr *ip_buf;
+ 
+-	arp = (struct arp_hdr *)ustack->network_layer;
+ 	eth = (struct uip_eth_hdr *)ustack->data_link_layer;
+ 	ip_buf = (struct ip_hdr *)ustack->network_layer;
+ 
+diff --git a/iscsiuio/src/unix/main.c b/iscsiuio/src/unix/main.c
+index a789de5..c1a72d8 100644
+--- a/iscsiuio/src/unix/main.c
++++ b/iscsiuio/src/unix/main.c
+@@ -181,7 +181,6 @@ static void main_usage()
+ static void daemon_init()
+ {
+ 	int fd;
+-	int rc;
+ 
+ 	fd = open("/dev/null", O_RDWR);
+ 	if (fd == -1)
+@@ -191,7 +190,7 @@ static void daemon_init()
+ 	dup2(fd, 1);
+ 	dup2(fd, 2);
+ 	setsid();
+-	rc = chdir("/");
++	chdir("/");
+ }
+ 
+ #define ISCSI_OOM_PATH_LEN 48
+diff --git a/iscsiuio/src/unix/nic.c b/iscsiuio/src/unix/nic.c
+index d56a9da..758eba5 100644
+--- a/iscsiuio/src/unix/nic.c
++++ b/iscsiuio/src/unix/nic.c
+@@ -989,9 +989,6 @@ int process_packets(nic_t *nic,
+ 		uint16_t type = 0;
+ 		int af_type = 0;
+ 		struct uip_stack *ustack;
+-		struct ip_hdr *ip;
+-		struct ipv6_hdr *ip6;
+-		void *dst_ip;
+ 		uint16_t vlan_id;
+ 
+ 		pkt->data_link_layer = pkt->buf;
+@@ -1013,14 +1010,10 @@ int process_packets(nic_t *nic,
+ 		switch (type) {
+ 		case UIP_ETHTYPE_IPv6:
+ 			af_type = AF_INET6;
+-			ip6 = (struct ipv6_hdr *) pkt->network_layer;
+-			dst_ip = (void *)&ip6->ipv6_dst;
+ 			break;
+ 		case UIP_ETHTYPE_IPv4:
+ 		case UIP_ETHTYPE_ARP:
+ 			af_type = AF_INET;
+-			ip = (struct ip_hdr *) pkt->network_layer;
+-			dst_ip = (void *)&ip->destipaddr;
+ 			break;
+ 		default:
+ 			LOG_PACKET(PFX "%s: Ignoring vlan:0x%x ethertype:0x%x",
+diff --git a/iscsiuio/src/unix/packet.c b/iscsiuio/src/unix/packet.c
+index efb3eec..c0eeb1f 100644
+--- a/iscsiuio/src/unix/packet.c
++++ b/iscsiuio/src/unix/packet.c
+@@ -104,7 +104,7 @@ void reset_packet(packet_t *pkt)
+ 
+ int alloc_free_queue(nic_t *nic, size_t num_of_packets)
+ {
+-	int rc, i;
++	int i;
+ 
+ 	pthread_mutex_lock(&nic->free_packet_queue_mutex);
+ 	for (i = 0; i < num_of_packets; i++) {
+@@ -112,7 +112,6 @@ int alloc_free_queue(nic_t *nic, size_t num_of_packets)
+ 
+ 		pkt = alloc_packet(1500, 1500);
+ 		if (pkt == NULL) {
+-			rc = i;
+ 			goto done;
+ 		}
+ 
+@@ -122,8 +121,6 @@ int alloc_free_queue(nic_t *nic, size_t num_of_packets)
+ 		nic->free_packet_queue = pkt;
+ 	}
+ 
+-	rc = num_of_packets;
+-
+ done:
+ 	pthread_mutex_unlock(&nic->free_packet_queue_mutex);
+ 
+-- 
+2.5.0
+

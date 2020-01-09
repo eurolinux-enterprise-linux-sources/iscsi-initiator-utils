@@ -1,0 +1,82 @@
+From 366f2f829f5e35f6b3f2740ed5d5d7c210fb8583 Mon Sep 17 00:00:00 2001
+From: Andy Grover <agrover@redhat.com>
+Date: Tue, 7 Oct 2014 11:38:20 -0700
+Subject: [PATCH] iscsiuio: Change nic_disable to return void
+
+No callers are checking its retval, and it's not clear what they'd do if
+it returned an error.
+
+Instead, log any errors, some which should really never happen.
+
+Signed-off-by: Andy Grover <agrover@redhat.com>
+---
+ iscsiuio/src/unix/nic_utils.c | 16 ++++++++++++----
+ iscsiuio/src/unix/nic_utils.h |  2 +-
+ 2 files changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/iscsiuio/src/unix/nic_utils.c b/iscsiuio/src/unix/nic_utils.c
+index cc11f9a..d57cc4f 100644
+--- a/iscsiuio/src/unix/nic_utils.c
++++ b/iscsiuio/src/unix/nic_utils.c
+@@ -973,9 +973,9 @@ int nic_enable(nic_t *nic)
+ /**
+  *  nic_disable() - Function used to disable the NIC
+  *  @param nic - NIC to disble
+- *  @return 0 on success, <0 on failure
++ *  @return void
+  */
+-int nic_disable(nic_t *nic, int going_down)
++void nic_disable(nic_t *nic, int going_down)
+ {
+ 	if (nic->state == NIC_STARTED_RUNNING ||
+ 	    nic->state == NIC_RUNNING) {
+@@ -996,6 +996,12 @@ int nic_disable(nic_t *nic, int going_down)
+ 
+ 		/* Convert from timeval to timespec */
+ 		rc = gettimeofday(&tp, NULL);
++		if (rc) {
++			LOG_ERR("gettimeofday failed, should never happen: %d\n", errno);
++			pthread_mutex_unlock(&nic->nic_mutex);
++			return;
++		}
++
+ 		ts.tv_sec = tp.tv_sec;
+ 		ts.tv_nsec = tp.tv_usec * 1000;
+ 		ts.tv_sec += 5;	/*  TODO: hardcoded wait for 5 seconds */
+@@ -1003,16 +1009,18 @@ int nic_disable(nic_t *nic, int going_down)
+ 		/*  Wait for the device to be disabled */
+ 		rc = pthread_cond_timedwait(&nic->disable_wait_cond,
+ 					    &nic->nic_mutex, &ts);
++		if (rc) {
++			LOG_ERR("cond_timedwait failed, should never happen: %d\n", errno);
++		}
++
+ 		pthread_mutex_unlock(&nic->nic_mutex);
+ 
+ 		LOG_DEBUG(PFX "%s: device disabled", nic->log_name);
+ 
+-		return 0;
+ 	} else {
+ 		LOG_WARN(PFX "%s: device already disabled: "
+ 			 "flag: 0x%x state: 0x%x",
+ 			 nic->log_name, nic->flags, nic->state);
+-		return -EALREADY;
+ 	}
+ }
+ 
+diff --git a/iscsiuio/src/unix/nic_utils.h b/iscsiuio/src/unix/nic_utils.h
+index 962d130..d5c1b58 100644
+--- a/iscsiuio/src/unix/nic_utils.h
++++ b/iscsiuio/src/unix/nic_utils.h
+@@ -91,7 +91,7 @@ void prepare_nic_thread(nic_t *nic);
+ void prepare_library(nic_t *nic);
+ 
+ int nic_enable(nic_t *nic);
+-int nic_disable(nic_t *nic, int going_down);
++void nic_disable(nic_t *nic, int going_down);
+ 
+ void dump_packet_to_log(struct nic_interface *iface,
+ 			uint8_t *buf, uint16_t buf_len);
+-- 
+2.5.0
+

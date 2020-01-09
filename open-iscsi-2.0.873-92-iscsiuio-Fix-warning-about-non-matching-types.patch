@@ -1,0 +1,26 @@
+From 769b48069cf69abbab2339a9f6ebccb8d3346744 Mon Sep 17 00:00:00 2001
+From: Andy Grover <agrover@redhat.com>
+Date: Tue, 7 Oct 2014 11:38:14 -0700
+Subject: [PATCH] iscsiuio: Fix warning about non-matching types
+
+Signed-off-by: Andy Grover <agrover@redhat.com>
+---
+ iscsiuio/src/unix/main.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/iscsiuio/src/unix/main.c b/iscsiuio/src/unix/main.c
+index e33db04..a789de5 100644
+--- a/iscsiuio/src/unix/main.c
++++ b/iscsiuio/src/unix/main.c
+@@ -233,7 +233,7 @@ int main(int argc, char *argv[])
+ {
+ 	int rc;
+ 	sigset_t set;
+-	char *pid_file = default_pid_filepath;
++	const char *pid_file = default_pid_filepath;
+ 	int fd;
+ 	int foreground = 0;
+ 	pid_t pid;
+-- 
+2.5.0
+

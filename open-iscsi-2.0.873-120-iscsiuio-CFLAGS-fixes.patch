@@ -1,0 +1,26 @@
+From 40616d1bf0e92b4af1ece6b3cd0d0416571740d9 Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@redhat.com>
+Date: Mon, 12 Jan 2015 11:24:10 -0800
+Subject: [PATCH] iscsiuio CFLAGS fixes
+
+try and keep existing CFLAGS from environment for packagers
+---
+ iscsiuio/configure.ac | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/iscsiuio/configure.ac b/iscsiuio/configure.ac
+index d619598..7ee1e73 100644
+--- a/iscsiuio/configure.ac
++++ b/iscsiuio/configure.ac
+@@ -53,7 +53,7 @@ AC_LIBTOOL_DLOPEN
+ # libtool stuff
+ AC_PROG_LIBTOOL
+ 
+-CFLAGS="-O2 -Wall"
++CFLAGS="${CFLAGS} -O2 -Wall"
+ ## check for --enable-debug first before checking CFLAGS before
+ ## so that we don't mix -O and -g
+ AC_ARG_ENABLE(debug,
+-- 
+2.5.0
+

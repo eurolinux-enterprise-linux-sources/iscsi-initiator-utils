@@ -1,0 +1,43 @@
+From 103f3d10b619e19a8c9c498aa48771da7862951c Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@redhat.com>
+Date: Fri, 29 Jan 2016 10:47:47 -0800
+Subject: [PATCH] use 24 bits of ISID qualifier space, instead of only 8
+
+---
+ usr/discovery.c | 4 +++-
+ usr/initiator.c | 4 +++-
+ 2 files changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/usr/discovery.c b/usr/discovery.c
+index 0c93749..854d0c1 100644
+--- a/usr/discovery.c
++++ b/usr/discovery.c
+@@ -1156,7 +1156,9 @@ static int iscsi_create_leading_conn(struct iscsi_session *session)
+ 	}
+ 	log_debug(2, "%s discovery created session %u\n", __FUNCTION__,
+ 		  session->id);
+-	session->isid[3] = session->id;
++	session->isid[3] = (session->id >> 16) & 0xff;
++	session->isid[4] = (session->id >>  8) & 0xff;
++	session->isid[5] = session->id & 0xff;
+ 
+ 	log_debug(2, "%s discovery create conn\n", __FUNCTION__);
+ 	rc = ipc->create_conn(t->handle, session->id, conn->id, &conn->id);
+diff --git a/usr/initiator.c b/usr/initiator.c
+index 8ffabd0..b4df101 100644
+--- a/usr/initiator.c
++++ b/usr/initiator.c
+@@ -1593,7 +1593,9 @@ static void session_conn_poll(void *data)
+ 		 * TODO: use the iface number or some other value
+ 		 * so this will be persistent
+ 		 */
+-		session->isid[3] = session->id;
++		session->isid[3] = (session->id >> 16) & 0xff;
++		session->isid[4] = (session->id >>  8) & 0xff;
++		session->isid[5] = session->id & 0xff;
+ 
+ 		if (ipc->bind_conn(session->t->handle, session->id,
+ 				   conn->id, conn->transport_ep_handle,
+-- 
+2.5.0
+

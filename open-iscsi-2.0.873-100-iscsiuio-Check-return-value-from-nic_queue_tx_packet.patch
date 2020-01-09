@@ -1,0 +1,32 @@
+From 0fbf555da698880bc44ebf8106ee666d43fc92b7 Mon Sep 17 00:00:00 2001
+From: Andy Grover <agrover@redhat.com>
+Date: Tue, 7 Oct 2014 11:38:22 -0700
+Subject: [PATCH] iscsiuio: Check return value from nic_queue_tx_packet
+
+and log an error if it fails.
+
+Signed-off-by: Andy Grover <agrover@redhat.com>
+---
+ iscsiuio/src/unix/nic.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/iscsiuio/src/unix/nic.c b/iscsiuio/src/unix/nic.c
+index 758eba5..38a5776 100644
+--- a/iscsiuio/src/unix/nic.c
++++ b/iscsiuio/src/unix/nic.c
+@@ -823,7 +823,11 @@ static void prepare_ipv4_packet(nic_t *nic,
+ 		break;
+ 	case NOT_IN_ARP_TABLE:
+ 		queue_rc = nic_queue_tx_packet(nic, nic_iface, pkt);
+-		uip_build_arp_request(ustack, ipaddr);
++		if (queue_rc) {
++			LOG_ERR("could not queue TX packet: %d", queue_rc);
++		} else {
++			uip_build_arp_request(ustack, ipaddr);
++		}
+ 		break;
+ 	default:
+ 		LOG_ERR("Unknown arp state");
+-- 
+2.5.0
+

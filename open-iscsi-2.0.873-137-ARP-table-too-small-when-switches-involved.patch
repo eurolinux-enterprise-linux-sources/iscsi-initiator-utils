@@ -1,0 +1,44 @@
+From f7811eaa68166a4092d32fea7126e4c8cfd4c3ca Mon Sep 17 00:00:00 2001
+From: Lee Duncan <lduncan@suse.com>
+Date: Wed, 1 Apr 2015 10:23:56 -0700
+Subject: [PATCH] ARP table too small when switches involved.
+
+The default uIP approach is to hae a super-small
+memory foot print, but modern networks, with
+switches, need more than 8 ARP entries, discovered
+during IPv6 using, showing up as slow iscsiuio
+response.
+---
+ iscsiuio/src/uip/ipv6.h   | 2 +-
+ iscsiuio/src/uip/uipopt.h | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/iscsiuio/src/uip/ipv6.h b/iscsiuio/src/uip/ipv6.h
+index bc63762..3586437 100644
+--- a/iscsiuio/src/uip/ipv6.h
++++ b/iscsiuio/src/uip/ipv6.h
+@@ -270,7 +270,7 @@ struct ipv6_context {
+ 	struct ipv6_addr default_router;
+ 	struct ipv6_prefix_entry *addr_list;
+ 	u8_t hop_limit;
+-#define UIP_ARPTAB_SIZE 8
++#define UIP_ARPTAB_SIZE 16
+ 
+ 	struct uip_stack *ustack;
+ #define MAX_MCADDR_TABLE 5
+diff --git a/iscsiuio/src/uip/uipopt.h b/iscsiuio/src/uip/uipopt.h
+index 946fce2..bcc8949 100644
+--- a/iscsiuio/src/uip/uipopt.h
++++ b/iscsiuio/src/uip/uipopt.h
+@@ -341,7 +341,7 @@
+ #ifdef UIP_CONF_ARPTAB_SIZE
+ #define UIP_ARPTAB_SIZE UIP_CONF_ARPTAB_SIZE
+ #else
+-#define UIP_ARPTAB_SIZE 8
++#define UIP_ARPTAB_SIZE 16
+ #endif
+ 
+ /**
+-- 
+2.5.0
+

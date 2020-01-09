@@ -1,0 +1,78 @@
+From d58864c8a610c35267ba916d047574049b953406 Mon Sep 17 00:00:00 2001
+From: Andy Grover <agrover@redhat.com>
+Date: Tue, 7 Oct 2014 11:38:15 -0700
+Subject: [PATCH] iscsiuio: Fix strict-aliasing warning with struct mac_address
+
+Resolve strict aliasing issues by defining a union inside struct
+mac_address. This lets dhcpv6 code directly get at the last 4 bytes of the
+mac address to use for a transaction id.
+
+Natural alignment would leave a gap between the struct members. Use
+attribute (packed) to avoid this and keep the overall struct 6 bytes.
+
+Signed-off-by: Andy Grover <agrover@redhat.com>
+---
+ iscsiuio/src/apps/dhcpc/dhcpv6.c | 6 ++----
+ iscsiuio/src/uip/ipv6.c          | 2 +-
+ iscsiuio/src/uip/ipv6.h          | 8 +++++++-
+ 3 files changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/iscsiuio/src/apps/dhcpc/dhcpv6.c b/iscsiuio/src/apps/dhcpc/dhcpv6.c
+index bfaf269..a4e25f0 100644
+--- a/iscsiuio/src/apps/dhcpc/dhcpv6.c
++++ b/iscsiuio/src/apps/dhcpc/dhcpv6.c
+@@ -69,8 +69,7 @@ void dhcpv6_init(struct dhcpv6_context *context)
+ 
+ 	/* Use the last four bytes of MAC address as base of the transaction
+ 	   ID */
+-	context->dhcpv6_transaction_id =
+-	    *((u32_t *) &context->our_mac_addr->addr[2]) & 0xffffffL;
++	context->dhcpv6_transaction_id = context->our_mac_addr->last_4_bytes;
+ 
+ 	context->dhcpv6_done = FALSE;
+ 	strcpy(context->dhcp_vendor_id, "BRCM ISAN");
+@@ -209,8 +208,7 @@ static u16_t dhcpv6_init_packet(struct dhcpv6_context *context, u8_t type)
+ 	/* Add IA_NA option */
+ 	opt->hdr.type = HOST_TO_NET16(DHCPV6_OPT_IA_NA);
+ 	opt->hdr.length = HOST_TO_NET16(sizeof(struct dhcpv6_opt_id_assoc_na));
+-	opt->type.ida_na.iaid =
+-	    htonl(*((u32_t *) &context->our_mac_addr->addr[2]));
++	opt->type.ida_na.iaid = htonl(context->our_mac_addr->last_4_bytes);
+ 	opt->type.ida_na.t1 = 0;
+ 	opt->type.ida_na.t2 = 0;
+ 	pkt_len += sizeof(struct dhcpv6_opt_id_assoc_na) +
+diff --git a/iscsiuio/src/uip/ipv6.c b/iscsiuio/src/uip/ipv6.c
+index cf92bdd..5c627ac 100644
+--- a/iscsiuio/src/uip/ipv6.c
++++ b/iscsiuio/src/uip/ipv6.c
+@@ -92,7 +92,7 @@ int iscsiL2AddMcAddr(struct ipv6_context *context,
+ {
+ 	int i;
+ 	struct mac_address *mc_addr;
+-	const struct mac_address all_zeroes_mc = { { 0, 0, 0, 0, 0, 0 } };
++	const struct mac_address all_zeroes_mc = { { { 0, 0, 0, 0, 0, 0 } } };
+ 
+ 	mc_addr = context->mc_addr;
+ 	for (i = 0; i < MAX_MCADDR_TABLE; i++, mc_addr++)
+diff --git a/iscsiuio/src/uip/ipv6.h b/iscsiuio/src/uip/ipv6.h
+index 231f454..481f3aa 100644
+--- a/iscsiuio/src/uip/ipv6.h
++++ b/iscsiuio/src/uip/ipv6.h
+@@ -71,7 +71,13 @@ struct udp_hdr {
+ };
+ 
+ struct mac_address {
+-	u8_t addr[6];
++	union {
++		u8_t addr[6];
++		struct {
++			u16_t first_2_bytes;
++			u32_t last_4_bytes;
++		} __attribute__ ((packed));
++	};
+ };
+ 
+ #define HOST_TO_NET16(a) htons(a)
+-- 
+2.5.0
+
