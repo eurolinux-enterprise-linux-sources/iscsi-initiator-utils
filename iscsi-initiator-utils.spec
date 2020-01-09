@@ -3,7 +3,7 @@
 Summary: iSCSI daemon and utility programs
 Name: iscsi-initiator-utils
 Version: 6.2.0.873
-Release: 26%{?dist}
+Release: 27%{?dist}
 Source0: http://people.redhat.com/mchristi/iscsi/rhel6.0/source/open-iscsi-2.0-872-rc4-bnx2i.tar.gz
 Source1: iscsid.init
 Source2: iscsidevs.init
@@ -89,6 +89,7 @@ Patch68: open-iscsi-2.0.873-150-iscsiadm-let-ping-be-tried-after-iface-config-is
 Patch69: open-iscsi-2.0.873-151-iscsiuio-Wait-for-iface-to-be-ready-before-issuing-t.patch
 Patch70: open-iscsi-2.0.873-152-iscsiuio-Get-the-library-to-use-based-on-uio-sysfs-n.patch
 Patch71: open-iscsi-2.0.873-iscsiuio-autoreconf.patch
+Patch72: open-iscsi-2.0.873-70-iscsi-tools-set-non-negotiated-params-early.patch
 # 6.9 iscsiuio updates
 Patch80: open-iscsi-2.0.873-147-iscsiuio-Add-QLogic-Vendor-ID-to-support-newer-NX2-H.patch
 Patch81: open-iscsi-2.0.873-153-iscsiuio-Do-not-memcpy-identical-locations.patch
@@ -188,6 +189,7 @@ developing applications that use %{name}.
 %patch69 -p1
 %patch70 -p1
 %patch71 -p1
+%patch72 -p1
 %patch80 -p1
 %patch81 -p1
 %patch82 -p1
@@ -321,6 +323,10 @@ fi
 %{_includedir}/libiscsi.h
 
 %changelog
+* Wed Jun 07 2017 Chris Leech <cleech@redhat.com> - 6.2.0.873-27
+- 1170750 apply "Set non negotiated params early" from upstream
+  to fix SendTargets discovery over iSER with some targets
+
 * Mon Jan 09 2017 Chris Leech <cleech@redhat.com> - 6.2.0.873-26
 - 1400844 regression in interface binding
 
