@@ -1,0 +1,26 @@
+From 4191ca6b82efe06f6c5290bc68904dd11674e680 Mon Sep 17 00:00:00 2001
+From: Frank Fegert <fra.nospam.nk@gmx.de>
+Date: Sun, 31 Jul 2016 10:48:59 +0200
+Subject: [PATCH] iscsiuio: ensure unlock of mutex in case of an error.
+
+Previously locked mutex "nl_process_mutex" should be unlocked in
+case the threads main loop exits due to an error.
+---
+ iscsiuio/src/unix/nic_nl.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/iscsiuio/src/unix/nic_nl.c b/iscsiuio/src/unix/nic_nl.c
+index 581ddb0..1a920c7 100644
+--- a/iscsiuio/src/unix/nic_nl.c
++++ b/iscsiuio/src/unix/nic_nl.c
+@@ -487,6 +487,7 @@ void *nl_process_handle_thread(void *arg)
+ 		rc = pthread_cond_wait(&nic->nl_process_cond,
+ 				       &nic->nl_process_mutex);
+ 		if (rc != 0) {
++			pthread_mutex_unlock(&nic->nl_process_mutex);
+ 			LOG_ERR("Fatal error in NL processing thread "
+ 				"during wait[%s]", strerror(rc));
+ 			break;
+-- 
+2.7.4
+

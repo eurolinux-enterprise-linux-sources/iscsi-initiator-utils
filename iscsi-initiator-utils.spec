@@ -3,7 +3,7 @@
 Summary: iSCSI daemon and utility programs
 Name: iscsi-initiator-utils
 Version: 6.2.0.873
-Release: 22%{?dist}
+Release: 26%{?dist}
 Source0: http://people.redhat.com/mchristi/iscsi/rhel6.0/source/open-iscsi-2.0-872-rc4-bnx2i.tar.gz
 Source1: iscsid.init
 Source2: iscsidevs.init
@@ -60,6 +60,12 @@ Patch33: iscsi-initiator-utils-libmount-stubs-for-rhel6.patch
 Patch34: iscsistart-vlan-network-setup.patch
 Patch35: open-iscsi-2.0.873-117-guard-against-NULL-ptr-during-discovery-from-unexpec.patch
 Patch36: open-iscsi-2.0.873-20-iscsiadm-bind-ifaces-to-portals-found-using-isns.patch
+Patch37: open-iscsi-2.0.873-77-iscsid-retry-login-for-ISCSI_ERR_HOST_NOT_FOUND.patch
+Patch38: open-iscsi-2.0.873-144-iscsid-make-sure-actor-is-delated-before-reschedulin.patch
+Patch39: open-iscsi-2.0.873-145-iscsid-iscsiuio-remove-uio-poll.patch
+Patch40: open-iscsi-2.0.873-146-iscsid-fix-iscsi_host_set_net_params-return-code.patch
+Patch41: open-iscsi-2.0.873-159-iscsi_tcp-set-SO_LINGER-to-abort-connection-for-erro.patch
+Patch42: open-iscsi-2.0.873-160-iscsiadm-fix-parallel-rescan-handling-of-exit-codes.patch
 # 6.8 iscsiuio updates
 Patch50: open-iscsi-2.0.873-80-iscsiuio-Rebranding-iscsiuio.patch
 Patch51: open-iscsi-2.0.873-92-iscsiuio-Fix-warning-about-non-matching-types.patch
@@ -83,6 +89,14 @@ Patch68: open-iscsi-2.0.873-150-iscsiadm-let-ping-be-tried-after-iface-config-is
 Patch69: open-iscsi-2.0.873-151-iscsiuio-Wait-for-iface-to-be-ready-before-issuing-t.patch
 Patch70: open-iscsi-2.0.873-152-iscsiuio-Get-the-library-to-use-based-on-uio-sysfs-n.patch
 Patch71: open-iscsi-2.0.873-iscsiuio-autoreconf.patch
+# 6.9 iscsiuio updates
+Patch80: open-iscsi-2.0.873-147-iscsiuio-Add-QLogic-Vendor-ID-to-support-newer-NX2-H.patch
+Patch81: open-iscsi-2.0.873-153-iscsiuio-Do-not-memcpy-identical-locations.patch
+Patch82: open-iscsi-2.0.873-154-iscsiuio-Clear-memory-after-allocation.patch
+Patch83: open-iscsi-2.0.873-155-iscsiuio-fixup-race-condition.patch
+Patch84: open-iscsi-2.0.873-157-Prevent-iscsiuio-from-segfaulting-due-to-un-lock-of-.patch
+Patch85: open-iscsi-2.0.873-158-iscsiuio-ensure-unlock-of-mutex-in-case-of-an-error.patch
+Patch86: open-iscsi-fix-regression-in-iscsi_tcp-iface-binding.patch
 # add rhel version info to iscsi tools
 Patch90: iscsi-initiator-utils-add-rh-ver.patch
 
@@ -146,6 +160,12 @@ developing applications that use %{name}.
 %patch34 -p1
 %patch35 -p1
 %patch36 -p1
+%patch37 -p1
+%patch38 -p1
+%patch39 -p1
+%patch40 -p1
+%patch41 -p1
+%patch42 -p1
 %patch50 -p1
 %patch51 -p1
 %patch52 -p1
@@ -168,6 +188,13 @@ developing applications that use %{name}.
 %patch69 -p1
 %patch70 -p1
 %patch71 -p1
+%patch80 -p1
+%patch81 -p1
+%patch82 -p1
+%patch83 -p1
+%patch84 -p1
+%patch85 -p1
+%patch86 -p1
 %patch90 -p1 -b .add-rh-ver
 
 %build
@@ -294,6 +321,19 @@ fi
 %{_includedir}/libiscsi.h
 
 %changelog
+* Mon Jan 09 2017 Chris Leech <cleech@redhat.com> - 6.2.0.873-26
+- 1400844 regression in interface binding
+
+* Thu Oct 13 2016 Chris Leech <cleech@redhat.com> - 6.2.0.873-25
+- 1380316 iscsiuio updates
+
+* Wed Oct 12 2016 Chris Leech <cleech@redhat.com> - 6.2.0.873-24
+- 1121670 iscsid enter infinite loop if conn_bind fails
+
+* Wed Oct 12 2016 Chris Leech <cleech@redhat.com> - 6.2.0.873-23
+- 1215578 iscsiadm rescan fails in node mode
+- 1311818 data corruption during ethernet port failure
+
 * Mon Aug 08 2016 Chris Leech <cleech@redhat.com> - 6.2.0.873-22
 - 1004015 fix binding of iSNS discovered targets to ifaces
 

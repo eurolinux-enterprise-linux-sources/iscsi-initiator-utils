@@ -1,0 +1,81 @@
+From c1642b9824a6765833719621cec5e2fa1b28fcd4 Mon Sep 17 00:00:00 2001
+From: Hannes Reinecke <hare@suse.de>
+Date: Fri, 15 Jan 2016 14:56:26 -0800
+Subject: [PATCH] iscsiuio: Do not memcpy identical locations
+
+It's pretty much pointless do a memcpy with src and dst
+identical.
+Found by valgrind.
+
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+Acked-by: Lee Duncan <lduncan@suse.com>
+---
+ iscsiuio/src/uip/uip.c  | 12 ++++++++----
+ iscsiuio/src/unix/nic.c | 16 +++++++---------
+ 2 files changed, 15 insertions(+), 13 deletions(-)
+
+diff --git a/iscsiuio/src/uip/uip.c b/iscsiuio/src/uip/uip.c
+index 178d7ac..9e6dcc3 100644
+--- a/iscsiuio/src/uip/uip.c
++++ b/iscsiuio/src/uip/uip.c
+@@ -220,10 +220,14 @@ void set_uip_stack(struct uip_stack *ustack,
+ 		   uip_ip4addr_t *netmask,
+ 		   uip_ip4addr_t *default_route, uint8_t *mac_addr)
+ {
+-	uip_sethostaddr4(ustack, ip);
+-	uip_setnetmask4(ustack, netmask);
+-	uip_setdraddr4(ustack, default_route);
+-	uip_setethernetmac(ustack, mac_addr);
++	if (ip)
++		uip_sethostaddr4(ustack, ip);
++	if (netmask)
++		uip_setnetmask4(ustack, netmask);
++	if (default_route)
++		uip_setdraddr4(ustack, default_route);
++	if (mac_addr)
++		uip_setethernetmac(ustack, mac_addr);
+ }
+ 
+ #if !UIP_ARCH_ADD32
+diff --git a/iscsiuio/src/unix/nic.c b/iscsiuio/src/unix/nic.c
+index 0108191..2fe00f1 100644
+--- a/iscsiuio/src/unix/nic.c
++++ b/iscsiuio/src/unix/nic.c
+@@ -470,9 +470,11 @@ int nic_remove(nic_t *nic)
+ 	pthread_mutex_lock(&nic->nic_mutex);
+ 
+ 	/*  Check if the file node exists before closing */
+-	rc = stat(nic->uio_device_name, &file_stat);
+-	if ((rc == 0) && (nic->ops))
+-		nic->ops->close(nic, 0);
++	if (nic->uio_device_name) {
++		rc = stat(nic->uio_device_name, &file_stat);
++		if ((rc == 0) && (nic->ops))
++			nic->ops->close(nic, 0);
++	}
+ 	pthread_mutex_unlock(&nic->nic_mutex);
+ 
+ 	nic->state = NIC_EXIT;
+@@ -1268,17 +1270,13 @@ static int do_acquisition(nic_t *nic, nic_interface_t *nic_iface,
+ 			 nic->log_name, inet_ntoa(addr));
+ 
+ 		set_uip_stack(&nic_iface->ustack,
+-			      &nic_iface->ustack.hostaddr,
+-			      &nic_iface->ustack.netmask,
+-			      &nic_iface->ustack.default_route_addr,
++			      NULL, NULL, NULL,
+ 			      nic_iface->mac_addr);
+ 		break;
+ 
+ 	case IPV4_CONFIG_DHCP:
+ 		set_uip_stack(&nic_iface->ustack,
+-			      &nic_iface->ustack.hostaddr,
+-			      &nic_iface->ustack.netmask,
+-			      &nic_iface->ustack.default_route_addr,
++			      NULL, NULL, NULL,
+ 			      nic_iface->mac_addr);
+ 		if (dhcpc_init(nic, &nic_iface->ustack,
+ 			       nic_iface->mac_addr, ETH_ALEN)) {
+-- 
+2.7.4
+

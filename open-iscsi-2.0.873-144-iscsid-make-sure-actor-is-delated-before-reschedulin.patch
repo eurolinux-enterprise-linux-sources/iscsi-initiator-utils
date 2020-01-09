@@ -1,0 +1,88 @@
+From 1985da253fb34cc40571cab44312cb9d806291c6 Mon Sep 17 00:00:00 2001
+From: Mike Christie <michaelc@cs.wisc.edu>
+Date: Tue, 25 Aug 2015 22:06:48 -0500
+Subject: [PATCH] iscsid: make sure actor is delated before rescheduling
+
+    iscsi_conn_connect() be called from a login_timer that is not deleted.
+    This causes it to be scheduled multiple times. This patch adds a new
+    function actor_timer_mod to handle both deletion and rescheduling.
+---
+ usr/actor.c     | 12 ++++--------
+ usr/actor.h     |  2 +-
+ usr/initiator.c |  8 +++-----
+ 3 files changed, 8 insertions(+), 14 deletions(-)
+
+diff --git a/usr/actor.c b/usr/actor.c
+index b8f8e61..d89cda4 100644
+--- a/usr/actor.c
++++ b/usr/actor.c
+@@ -187,16 +187,12 @@ actor_timer(actor_t *thread, uint32_t timeout, void (*callback)(void *),
+ 	actor_schedule_private(thread, timeout, 0);
+ }
+ 
+-int
++void
+ actor_timer_mod(actor_t *thread, uint32_t timeout, void *data)
+ {
+-	if (thread->state == ACTOR_WAITING) {
+-		list_del_init(&thread->list);
+-		thread->data = data;
+-		actor_schedule_private(thread, timeout, 0);
+-		return 1;
+-	}
+-	return 0;
++	actor_delete(&thread->list);
++	thread->data = data;
++	actor_schedule_private(thread, timeout, 0);
+ }
+ 
+ void
+diff --git a/usr/actor.h b/usr/actor.h
+index 704224d..ad49b49 100644
+--- a/usr/actor.h
++++ b/usr/actor.h
+@@ -48,7 +48,7 @@ extern void actor_schedule_head(actor_t *thread);
+ extern void actor_schedule(actor_t *thread);
+ extern void actor_timer(actor_t *thread, uint32_t timeout,
+ 			void (*callback)(void *), void *data);
+-extern int actor_timer_mod(actor_t *thread, uint32_t new_timeout, void *data);
++extern void actor_timer_mod(actor_t *thread, uint32_t new_timeout, void *data);
+ extern void actor_poll(void);
+ extern void actor_init(void);
+ 
+diff --git a/usr/initiator.c b/usr/initiator.c
+index facf77b..0c28574 100644
+--- a/usr/initiator.c
++++ b/usr/initiator.c
+@@ -263,6 +263,7 @@ __session_conn_create(iscsi_session_t *session, int cid)
+ 
+ 	conn->state = ISCSI_CONN_STATE_FREE;
+ 	conn->session = session;
++	actor_new(&conn->login_timer, iscsi_login_timedout, NULL);
+ 	/*
+ 	 * TODO: we must export the socket_fd/transport_eph from sysfs
+ 	 * so if iscsid is resyncing up we can pick that up and cleanup up
+@@ -527,9 +528,7 @@ queue_delayed_reopen(queue_task_t *qtask, int delay)
+  	 * iscsi_login_eh can handle the login resched as
+  	 * if it were login time out
+  	 */
+-	actor_delete(&conn->login_timer);
+-	actor_timer(&conn->login_timer, delay * 1000,
+-		    iscsi_login_timedout, qtask);
++	actor_timer_mod(&conn->login_timer, delay * 1000, qtask);
+ }
+ 
+ static int iscsi_conn_connect(struct iscsi_conn *conn, queue_task_t *qtask)
+@@ -564,8 +563,7 @@ static int iscsi_conn_connect(struct iscsi_conn *conn, queue_task_t *qtask)
+ 	iscsi_sched_ev_context(ev_context, conn, 0, EV_CONN_POLL);
+ 	log_debug(3, "Setting login timer %p timeout %d", &conn->login_timer,
+ 		  conn->login_timeout);
+-	actor_timer(&conn->login_timer, conn->login_timeout * 1000,
+-		    iscsi_login_timedout, qtask);
++	actor_timer_mod(&conn->login_timer, conn->login_timeout * 1000, qtask);
+ 	return 0;
+ }
+ 
+-- 
+2.7.4
+

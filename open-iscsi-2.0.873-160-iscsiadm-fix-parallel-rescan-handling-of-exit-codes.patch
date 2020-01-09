@@ -1,0 +1,92 @@
+From 2d300c67b31b527cb81f1c1686d961e0700f86ec Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@redhat.com>
+Date: Fri, 8 Apr 2016 10:55:46 -0700
+Subject: [PATCH] iscsiadm: fix parallel rescan handling of exit codes
+
+The parallel rescan patches work, in so much as the rescans happen, but
+if a target is specified the non-matching cases cause warning to be
+printed and a non-zero exit code.
+
+To reproduce: have more than one session to different targets, issue a
+node mode rescan command to one of them (-m node -T <iqn.target> -R).
+
+The problem is that while exit() takes an int, only the low byte is part
+of the exit code and it's combined with other exit status information.
+iscsiadm tries to use exit(-1) to indicate a non-match (not a fatal
+error). The value retrieved with wait() after an exit(-1) is actually
+65280.
+
+Fix this by making use of the wait.h macros for checking the exit code.
+---
+ include/iscsi_err.h |  4 ++++
+ usr/iscsi_err.c     |  3 +++
+ usr/iscsi_sysfs.c   | 20 +++++++++++++++++---
+ 3 files changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/include/iscsi_err.h b/include/iscsi_err.h
+index 1139133..506bd8c 100644
+--- a/include/iscsi_err.h
++++ b/include/iscsi_err.h
+@@ -64,6 +64,10 @@ enum {
+ 	ISCSI_ERR_BUSY			= 28,
+ 	/* Operation failed, but retrying layer may succeed */
+ 	ISCSI_ERR_AGAIN			= 29,
++	/* unknown discovery type */
++	ISCSI_ERR_UNKNOWN_DISCOVERY_TYPE = 30,
++	/* child process terminated */
++	ISCSI_ERR_CHILD_TERMINATED	= 31,
+ 
+ 	/* Always last. Indicates end of error code space */
+ 	ISCSI_MAX_ERR_VAL,
+diff --git a/usr/iscsi_err.c b/usr/iscsi_err.c
+index 4fe1c53..1ba9e64 100644
+--- a/usr/iscsi_err.c
++++ b/usr/iscsi_err.c
+@@ -51,6 +51,9 @@ static char *iscsi_err_msgs[] = {
+ 	/* 26 */ "iSNS registration failed",
+ 	/* 27 */ "operation not supported",
+ 	/* 28 */ "device or resource in use",
++	/* 29 */ "operation failed but retry may succeed",
++	/* 30 */ "unknown discovery type",
++	/* 31 */ "child process terminated",
+ };
+ 
+ char *iscsi_err_to_str(int err)
+diff --git a/usr/iscsi_sysfs.c b/usr/iscsi_sysfs.c
+index 261329d..edd84d8 100644
+--- a/usr/iscsi_sysfs.c
++++ b/usr/iscsi_sysfs.c
+@@ -1471,13 +1471,27 @@ int iscsi_sysfs_for_each_session(void *data, int *nr_found,
+ 				break;
+ 			}
+ 
+-			if ((chldrc > 0) && (rc == 0)) {
++			if (!WIFEXITED(chldrc)) {
+ 				/*
++				 * abnormal termination (signal, exception, etc.)
++				 *
+ 				 * The non-parallel code path returns the first
+ 				 * error so this keeps the same semantics.
+ 				 */
+-				rc = chldrc;
+-			} else if (chldrc == 0) {
++				if (rc == 0)
++					rc = ISCSI_ERR_CHILD_TERMINATED;
++			} else if ((WEXITSTATUS(chldrc) != 0) &&
++			           (WEXITSTATUS(chldrc) != 255)) {
++				/*
++				 * 0 is success
++				 * 255 is a truncated return code from exit(-1)
++				 *     and means no match
++				 * anything else (this case) is an error
++				 */
++				if (rc == 0)
++					rc = WEXITSTATUS(chldrc);
++			} else if (WEXITSTATUS(chldrc) == 0) {
++				/* success */
+ 				(*nr_found)++;
+ 			}
+ 		}
+-- 
+2.7.4
+

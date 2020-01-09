@@ -1,0 +1,25 @@
+From 9f770f9eb0f302d146d455f1d68648e2d0172eb6 Mon Sep 17 00:00:00 2001
+From: Frank Fegert <fra.nospam.nk@gmx.de>
+Date: Thu, 28 Jul 2016 10:42:40 +0200
+Subject: [PATCH] Prevent iscsiuio from segfaulting due to un-lock of a not
+ locked mutex.
+
+---
+ iscsiuio/src/unix/nic_nl.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/iscsiuio/src/unix/nic_nl.c b/iscsiuio/src/unix/nic_nl.c
+index 391003f..581ddb0 100644
+--- a/iscsiuio/src/unix/nic_nl.c
++++ b/iscsiuio/src/unix/nic_nl.c
+@@ -483,6 +483,7 @@ void *nl_process_handle_thread(void *arg)
+ 	while (!event_loop_stop) {
+ 		char *data = NULL;
+ 
++		pthread_mutex_lock(&nic->nl_process_mutex);
+ 		rc = pthread_cond_wait(&nic->nl_process_cond,
+ 				       &nic->nl_process_mutex);
+ 		if (rc != 0) {
+-- 
+2.7.4
+

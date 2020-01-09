@@ -1,0 +1,121 @@
+From dee34ec4c61aac700a823435e97be16dba350fb6 Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@redhat.com>
+Date: Sun, 11 Jan 2015 21:36:24 -0800
+Subject: fix regression in iscsi_tcp iface binding
+
+The changes in "retry login for ISCSI_ERR_HOST_NOT_FOUND" caused
+sessions using the iscsi_tcp transport bound to a network iface to fail
+to connect due to the host lookup failing (iscsi_tcp hosts are
+dynamically allocated per-session).
+
+This marks transports that use a host fixed to a hardware offload device
+with "bind_ep_required" and only requires a host lookup before starting
+the connection if this flag is set.
+
+Signed-off-by: Chris Leech <cleech@redhat.com>
+---
+ usr/initiator.c | 30 ++++++++++++++++--------------
+ usr/transport.c |  5 +++++
+ usr/transport.h |  1 +
+ 3 files changed, 22 insertions(+), 14 deletions(-)
+
+diff --git a/usr/initiator.c b/usr/initiator.c
+index 0f691ae..114d1dc 100644
+--- a/usr/initiator.c
++++ b/usr/initiator.c
+@@ -400,20 +400,22 @@ __session_create(node_rec_t *rec, struct iscsi_transport *t, int *rc)
+ 
+ 	iscsi_session_init_params(session);
+ 
+-	hostno = iscsi_sysfs_get_host_no_from_hwinfo(&rec->iface, rc);
+-	if (!*rc) {
+-		/*
+-		 * if the netdev or mac was set, then we are going to want
+-		 * to want to bind the all the conns/eps to a specific host
+-		 * if offload is used.
+-		 */
+-		session->conn[0].bind_ep = 1;
+-		session->hostno = hostno;
+-	} else if (*rc == ISCSI_ERR_HOST_NOT_FOUND) {
+-		goto free_session;	
+-	} else {
+-		 *rc = 0;
+-	}
++        if (t->template->bind_ep_required) {
++                hostno = iscsi_sysfs_get_host_no_from_hwinfo(&rec->iface, rc);
++                if (!*rc) {
++                        /*
++                         * if the netdev or mac was set, then we are going to want
++                         * to want to bind the all the conns/eps to a specific host
++                         * if offload is used.
++                         */
++                        session->conn[0].bind_ep = 1;
++                        session->hostno = hostno;
++                } else if (*rc == ISCSI_ERR_HOST_NOT_FOUND) {
++                        goto free_session;	
++                } else {
++                         *rc = 0;
++                }
++        }
+ 
+ 	list_add_tail(&session->list, &t->sessions);
+ 	return session;
+diff --git a/usr/transport.c b/usr/transport.c
+index 1d79a68..fd5f78b 100644
+--- a/usr/transport.c
++++ b/usr/transport.c
+@@ -59,6 +59,7 @@ struct iscsi_transport_template iscsi_iser = {
+ struct iscsi_transport_template cxgb3i = {
+ 	.name		= "cxgb3i",
+ 	.set_host_ip	= 1,
++	.bind_ep_required = 1,
+ 	.ep_connect	= ktransport_ep_connect,
+ 	.ep_poll	= ktransport_ep_poll,
+ 	.ep_disconnect	= ktransport_ep_disconnect,
+@@ -68,6 +69,7 @@ struct iscsi_transport_template cxgb3i = {
+ struct iscsi_transport_template cxgb4i = {
+ 	.name		= "cxgb4i",
+ 	.set_host_ip	= 1,
++	.bind_ep_required = 1,
+ 	.ep_connect	= ktransport_ep_connect,
+ 	.ep_poll	= ktransport_ep_poll,
+ 	.ep_disconnect	= ktransport_ep_disconnect,
+@@ -78,6 +80,7 @@ struct iscsi_transport_template bnx2i = {
+ 	.name		= "bnx2i",
+ 	.set_host_ip	= 1,
+ 	.use_boot_info	= 1,
++	.bind_ep_required = 1,
+ 	.ep_connect	= ktransport_ep_connect,
+ 	.ep_poll	= ktransport_ep_poll,
+ 	.ep_disconnect	= ktransport_ep_disconnect,
+@@ -87,6 +90,7 @@ struct iscsi_transport_template bnx2i = {
+ 
+ struct iscsi_transport_template be2iscsi = {
+ 	.name		= "be2iscsi",
++	.bind_ep_required = 1,
+ 	.create_conn	= be2iscsi_create_conn,
+ 	.ep_connect	= ktransport_ep_connect,
+ 	.ep_poll	= ktransport_ep_poll,
+@@ -96,6 +100,7 @@ struct iscsi_transport_template be2iscsi = {
+ struct iscsi_transport_template qla4xxx = {
+ 	.name		= "qla4xxx",
+ 	.set_host_ip	= 0,
++	.bind_ep_required = 1,
+ 	.ep_connect	= ktransport_ep_connect,
+ 	.ep_poll	= ktransport_ep_poll,
+ 	.ep_disconnect	= ktransport_ep_disconnect,
+diff --git a/usr/transport.h b/usr/transport.h
+index 6015e04..b003e33 100644
+--- a/usr/transport.h
++++ b/usr/transport.h
+@@ -32,6 +32,7 @@ struct iscsi_transport_template {
+ 	 */
+ 	uint8_t set_host_ip;
+ 	uint8_t use_boot_info;
++        uint8_t bind_ep_required;
+ 	int (*ep_connect) (struct iscsi_conn *conn, int non_blocking);
+ 	int (*ep_poll) (struct iscsi_conn *conn, int timeout_ms);
+ 	void (*ep_disconnect) (struct iscsi_conn *conn);
+-- 
+2.9.3
+

@@ -1,0 +1,57 @@
+From 1f5e7919d70e84a81673a112301a1eb6ff50540c Mon Sep 17 00:00:00 2001
+From: Hannes Reinecke <hare@suse.de>
+Date: Fri, 15 Jan 2016 14:56:27 -0800
+Subject: [PATCH] iscsiuio: Clear memory after allocation
+
+Found by valgrind.
+
+Signed-off-by: Hannes Reinecke <hare@suse.de>
+Acked-by: Lee Duncan <lduncan@suse.com>
+---
+ iscsiuio/src/unix/libs/bnx2x.c | 1 +
+ iscsiuio/src/unix/packet.c     | 4 +++-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/iscsiuio/src/unix/libs/bnx2x.c b/iscsiuio/src/unix/libs/bnx2x.c
+index c9e3436..19cbcec 100644
+--- a/iscsiuio/src/unix/libs/bnx2x.c
++++ b/iscsiuio/src/unix/libs/bnx2x.c
+@@ -369,6 +369,7 @@ static int bnx2x_get_drv_version(bnx2x_t *bp)
+ 		return -EIO;
+ 	}
+ 
++	memset(&drvinfo, 0, sizeof(drvinfo));
+ 	drvinfo.cmd = ETHTOOL_GDRVINFO;
+ 	ifr.ifr_data = (caddr_t) &drvinfo;
+ 	rc = ioctl(fd, SIOCETHTOOL, &ifr);
+diff --git a/iscsiuio/src/unix/packet.c b/iscsiuio/src/unix/packet.c
+index c0eeb1f..ecea09b 100644
+--- a/iscsiuio/src/unix/packet.c
++++ b/iscsiuio/src/unix/packet.c
+@@ -38,6 +38,7 @@
+  */
+ #include <errno.h>
+ #include <stdio.h>
++#include <string.h>
+ 
+ #include "logger.h"
+ #include "packet.h"
+@@ -59,13 +60,14 @@ struct packet *alloc_packet(size_t max_buf_size, size_t priv_size)
+ 		LOG_ERR("Could not allocate any memory for packet");
+ 		return NULL;
+ 	}
++	memset(pkt, 0, max_buf_size + sizeof(struct packet));
+ 
+ 	priv = malloc(priv_size);
+ 	if (priv == NULL) {
+ 		LOG_ERR("Could not allocate any memory for private structure");
+ 		goto free_pkt;
+ 	}
+-
++	memset(priv, 0, priv_size);
+ 	pkt->max_buf_size = max_buf_size;
+ 	pkt->priv = priv;
+ 
+-- 
+2.7.4
+
