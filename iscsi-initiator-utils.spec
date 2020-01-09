@@ -3,7 +3,7 @@
 Summary: iSCSI daemon and utility programs
 Name: iscsi-initiator-utils
 Version: 6.2.0.873
-Release: 21%{?dist}
+Release: 22%{?dist}
 Source0: http://people.redhat.com/mchristi/iscsi/rhel6.0/source/open-iscsi-2.0-872-rc4-bnx2i.tar.gz
 Source1: iscsid.init
 Source2: iscsidevs.init
@@ -59,6 +59,7 @@ Patch32: iscsi-initiator-utils-iscsid-safe-session-logout.patch
 Patch33: iscsi-initiator-utils-libmount-stubs-for-rhel6.patch
 Patch34: iscsistart-vlan-network-setup.patch
 Patch35: open-iscsi-2.0.873-117-guard-against-NULL-ptr-during-discovery-from-unexpec.patch
+Patch36: open-iscsi-2.0.873-20-iscsiadm-bind-ifaces-to-portals-found-using-isns.patch
 # 6.8 iscsiuio updates
 Patch50: open-iscsi-2.0.873-80-iscsiuio-Rebranding-iscsiuio.patch
 Patch51: open-iscsi-2.0.873-92-iscsiuio-Fix-warning-about-non-matching-types.patch
@@ -144,6 +145,7 @@ developing applications that use %{name}.
 %patch33 -p1
 %patch34 -p1
 %patch35 -p1
+%patch36 -p1
 %patch50 -p1
 %patch51 -p1
 %patch52 -p1
@@ -292,6 +294,9 @@ fi
 %{_includedir}/libiscsi.h
 
 %changelog
+* Mon Aug 08 2016 Chris Leech <cleech@redhat.com> - 6.2.0.873-22
+- 1004015 fix binding of iSNS discovered targets to ifaces
+
 * Mon Mar 28 2016 Chris Leech <cleech@redhat.com> - 6.2.0.873-21
 - 1294965 iscsiuio match based on driver to support new hardware without
   adding PCI IDs (still need IDs added to kernel)
