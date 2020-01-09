@@ -1,0 +1,98 @@
+From 2819e57304bbef87a64ceef91f4e4a384c1a670b Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@redhat.com>
+Date: Fri, 6 Sep 2013 16:12:45 -0700
+Subject: [PATCH 1/1] Aligned all socket comm between iscsiadm, iscsid, and
+ iscsiuio
+
+The socket communication has been updated inside iscsiuio but not iscsiadm
+and iscsid.  This patches fixes all communication paths.
+
+Signed-off-by: Eddie Wai <eddie.wai@broadcom.com>
+
+Pulls from the following upstream commits
+
+(2d086a831dc16d10729d6fce17bed3ade3efd16c)
+    iscsid,iscsiadm: fix abstract socket length in bind() call
+
+    For abstract sockets, the addrlen parameter should be the actual
+    length of socket's name.  Otherwise socket gets padded with some
+    number of NULs.
+
+(b0ba4d6288f87d33508add1b680cf22d2c3dbfe4)
+    iscsid: Fix strlen parameter
+
+    The target socket name is passed as parameter, don't use the hardwired
+    one.
+
+    Signed-off-by: Jan Vesely <jvesely@redhat.com>
+---
+ usr/iscsid_req.c | 7 +++++--
+ usr/mgmt_ipc.c   | 9 +++++----
+ 2 files changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/usr/iscsid_req.c b/usr/iscsid_req.c
+index 7c89ae4..715c0aa 100644
+--- a/usr/iscsid_req.c
++++ b/usr/iscsid_req.c
+@@ -58,7 +58,7 @@ static void iscsid_startup(void)
+ 
+ static int ipc_connect(int *fd, char *unix_sock_name, int start_iscsid)
+ {
+-	int nsec;
++	int nsec, addr_len;
+ 	struct sockaddr_un addr;
+ 
+ 	*fd = socket(AF_LOCAL, SOCK_STREAM, 0);
+@@ -67,15 +67,18 @@ static int ipc_connect(int *fd, char *unix_sock_name, int start_iscsid)
+ 		return ISCSI_ERR_ISCSID_NOTCONN;
+ 	}
+ 
++	addr_len = offsetof(struct sockaddr_un, sun_path) + strlen(unix_sock_name) + 1;
++
+ 	memset(&addr, 0, sizeof(addr));
+ 	addr.sun_family = AF_LOCAL;
+ 	memcpy((char *) &addr.sun_path + 1, unix_sock_name,
+ 	       strlen(unix_sock_name));
++
+ 	/*
+ 	 * Trying to connect with exponential backoff
+ 	 */
+ 	for (nsec = 1; nsec <= MAXSLEEP; nsec <<= 1) {
+-		if (connect(*fd, (struct sockaddr *) &addr, sizeof(addr)) == 0)
++		if (connect(*fd, (struct sockaddr *) &addr, addr_len) == 0)
+ 			/* Connection established */
+ 			return ISCSI_SUCCESS;
+ 
+diff --git a/usr/mgmt_ipc.c b/usr/mgmt_ipc.c
+index 5c39c2e..5ca4b1a 100644
+--- a/usr/mgmt_ipc.c
++++ b/usr/mgmt_ipc.c
+@@ -43,7 +43,7 @@
+ int
+ mgmt_ipc_listen(void)
+ {
+-	int fd, err;
++	int fd, err, addr_len;
+ 	struct sockaddr_un addr;
+ 
+ 	fd = socket(AF_LOCAL, SOCK_STREAM, 0);
+@@ -52,12 +52,13 @@ mgmt_ipc_listen(void)
+ 		return fd;
+ 	}
+ 
++	addr_len = offsetof(struct sockaddr_un, sun_path) + strlen(ISCSIADM_NAMESPACE) + 1;
++
+ 	memset(&addr, 0, sizeof(addr));
+ 	addr.sun_family = AF_LOCAL;
+-	memcpy((char *) &addr.sun_path + 1, ISCSIADM_NAMESPACE,
+-		strlen(ISCSIADM_NAMESPACE));
++	memcpy((char *) &addr.sun_path + 1, ISCSIADM_NAMESPACE, strlen(ISCSIADM_NAMESPACE));
+ 
+-	if ((err = bind(fd, (struct sockaddr *) &addr, sizeof(addr))) < 0) {
++	if ((err = bind(fd, (struct sockaddr *) &addr, addr_len)) < 0 ) {
+ 		log_error("Can not bind IPC socket");
+ 		close(fd);
+ 		return err;
+-- 
+1.8.1.4
+

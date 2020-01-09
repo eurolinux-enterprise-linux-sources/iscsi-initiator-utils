@@ -1,0 +1,340 @@
+From 133e799be1b6c1d7164495590c246b8553258582 Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@redhat.com>
+Date: Thu, 26 Feb 2015 11:34:45 -0800
+Subject: [PATCH 1/1] libmount stubs for RHEL6
+
+Signed-off-by: Chris Leech <cleech@redhat.com>
+---
+ usr/Makefile    |   6 +-
+ usr/initiator.c |   2 +-
+ usr/libmount.c  | 250 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ usr/libmount.h  |  17 ++++
+ 4 files changed, 271 insertions(+), 4 deletions(-)
+ create mode 100644 usr/libmount.c
+ create mode 100644 usr/libmount.h
+
+diff --git a/usr/Makefile b/usr/Makefile
+index 0db7549..1eec623 100644
+--- a/usr/Makefile
++++ b/usr/Makefile
+@@ -45,7 +45,7 @@ ISCSI_LIB_SRCS = iscsi_util.o io.o auth.o iscsi_timer.o login.o log.o md5.o \
+ 	initiator_common.o iscsi_err.o flashnode.o uip_mgmt_ipc.o \
+ 	$(IPC_OBJ)  $(SYSDEPS_SRCS) $(DCB_OBJ)
+ # core initiator files
+-INITIATOR_SRCS = initiator.o scsi.o actor.o event_poll.o mgmt_ipc.o kern_err_table.o
++INITIATOR_SRCS = initiator.o scsi.o actor.o event_poll.o mgmt_ipc.o kern_err_table.o libmount.o
+ 
+ # fw boot files
+ FW_BOOT_SRCS = $(wildcard ../utils/fwparam_ibft/*.o)
+@@ -57,14 +57,14 @@ all: $(PROGRAMS)
+ 
+ iscsid: $(ISCSI_LIB_SRCS) $(INITIATOR_SRCS) $(DISCOVERY_SRCS) \
+ 	iscsid.o session_mgmt.o discoveryd.o
+-	$(CC) $(CFLAGS) $^ -o $@  -L../utils/open-isns -lisns -lmount
++	$(CC) $(CFLAGS) $^ -o $@  -L../utils/open-isns -lisns
+ 
+ iscsiadm: $(ISCSI_LIB_SRCS) $(DISCOVERY_SRCS) iscsiadm.o session_mgmt.o
+ 	$(CC) $(CFLAGS) $^ -o $@ -L../utils/open-isns -lisns
+ 
+ iscsistart: $(ISCSI_LIB_SRCS) $(INITIATOR_SRCS) $(FW_BOOT_SRCS) \
+ 		iscsistart.o statics.o
+-	$(CC) $(CFLAGS) $^ -o $@ -lmount
++	$(CC) $(CFLAGS) $^ -o $@
+ clean:
+ 	rm -f *.o $(PROGRAMS) .depend $(LIBSYS)
+ 
+diff --git a/usr/initiator.c b/usr/initiator.c
+index ddf3040..8ffabd0 100644
+--- a/usr/initiator.c
++++ b/usr/initiator.c
+@@ -30,7 +30,7 @@
+ #include <errno.h>
+ #include <dirent.h>
+ #include <fcntl.h>
+-#include <libmount/libmount.h>
++#include "libmount.h"
+ 
+ #include "initiator.h"
+ #include "transport.h"
+diff --git a/usr/libmount.c b/usr/libmount.c
+new file mode 100644
+index 0000000..6f049c8
+--- /dev/null
++++ b/usr/libmount.c
+@@ -0,0 +1,250 @@
++/*
++ * canonicalize.c -- canonicalize pathname by removing symlinks
++ *
++ * This file may be distributed under the terms of the
++ * GNU Lesser General Public License.
++ *
++ * Copyright (C) 2009-2013 Karel Zak <kzak@redhat.com>
++ */
++#include <stdio.h>
++#include <string.h>
++#include <ctype.h>
++#include <unistd.h>
++#include <errno.h>
++#include <stdlib.h>
++#include <sys/types.h>
++
++/*
++ * Converts private "dm-N" names to "/dev/mapper/<name>"
++ *
++ * Since 2.6.29 (patch 784aae735d9b0bba3f8b9faef4c8b30df3bf0128) kernel sysfs
++ * provides the real DM device names in /sys/block/<ptname>/dm/name
++ */
++static char *canonicalize_dm_name(const char *ptname)
++{
++	FILE	*f;
++	size_t	sz;
++	char	path[256], name[256], *res = NULL;
++
++	if (!ptname || !*ptname)
++		return NULL;
++
++	snprintf(path, sizeof(path), "/sys/block/%s/dm/name", ptname);
++	if (!(f = fopen(path, "re")))
++		return NULL;
++
++	/* read "<name>\n" from sysfs */
++	if (fgets(name, sizeof(name), f) && (sz = strlen(name)) > 1) {
++		name[sz - 1] = '\0';
++		snprintf(path, sizeof(path), "/dev/mapper/%s", name);
++
++		if (access(path, F_OK) == 0)
++			res = strdup(path);
++	}
++	fclose(f);
++	return res;
++}
++
++static int is_dm_devname(char *canonical, char **name)
++{
++	char *p = strrchr(canonical, '/');
++
++	*name = NULL;
++
++	if (!p
++	    || strncmp(p, "/dm-", 4) != 0
++	    || !isdigit(*(p + 4)))
++		return 0;
++
++	*name = p + 1;
++	return 1;
++}
++
++static char *canonicalize_path(const char *path)
++{
++	char *canonical, *dmname;
++
++	if (!path || !*path)
++		return NULL;
++
++	canonical = strdup(path);
++
++	if (is_dm_devname(canonical, &dmname)) {
++		char *dm = canonicalize_dm_name(dmname);
++		if (dm) {
++			free(canonical);
++			return dm;
++		}
++	}
++
++	return canonical;
++}
++
++/*
++ * ismounted.c --- Check to see if the filesystem was mounted
++ *
++ * Copyright (C) 1995,1996,1997,1998,1999,2000,2008 Theodore Ts'o.
++ *
++ * This file may be redistributed under the terms of the GNU Public
++ * License.
++ */
++#include <stdio.h>
++#include <unistd.h>
++#include <stdlib.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <mntent.h>
++#include <string.h>
++#include <ctype.h>
++#include <sys/param.h>
++
++#define MF_MOUNTED	1
++#define MF_ISROOT	2
++#define MF_READONLY	4
++#define MF_SWAP		8
++#define MF_BUSY		16
++
++/*
++ * Helper function which checks a file in /etc/mtab format to see if a
++ * filesystem is mounted.  Returns an error if the file doesn't exist
++ * or can't be opened.
++ */
++static int check_mntent_file(const char *mtab_file, const char *file,
++				   int *mount_flags, char *mtpt, int mtlen)
++{
++	struct mntent	*mnt;
++	FILE		*f;
++
++	*mount_flags = 0;
++	if ((f = setmntent (mtab_file, "r")) == NULL)
++		return errno;
++
++	while ((mnt = getmntent (f)) != NULL) {
++		if (mnt->mnt_fsname[0] != '/')
++			continue;
++		if (strcmp(file, mnt->mnt_fsname) == 0)
++			break;
++	}
++
++	if (mnt == NULL) {
++		goto errout;
++	}
++	*mount_flags = MF_MOUNTED;
++
++	/* Check to see if the ro option is set */
++	if (hasmntopt(mnt, MNTOPT_RO))
++		*mount_flags |= MF_READONLY;
++
++	if (mtpt)
++		strncpy(mtpt, mnt->mnt_dir, mtlen);
++errout:
++	endmntent(f);
++	return 0;
++}
++
++static int check_mntent(const char *file, int *mount_flags,
++			      char *mtpt, int mtlen)
++{
++	int	retval;
++
++	retval = check_mntent_file("/proc/mounts", file, mount_flags, mtpt, mtlen);
++	if (retval == 0 && (*mount_flags != 0))
++		return 0;
++	if (access("/proc/mounts", R_OK) == 0) {
++		*mount_flags = 0;
++		return retval;
++	}
++	*mount_flags = 0;
++	return 0;
++}
++
++
++/*
++ * Check to see if we're dealing with the swap device.
++ */
++static int is_swap_device(const char *file)
++{
++	FILE		*f;
++	char		buf[1024], *cp;
++	int		ret = 0;
++
++	if (!(f = fopen("/proc/swaps", "re")))
++		return 0;
++	/* Skip the first line */
++	if (!fgets(buf, sizeof(buf), f))
++		goto leave;
++	if (*buf && strncmp(buf, "Filename\t", 9))
++		/* Linux <=2.6.19 contained a bug in the /proc/swaps
++		 * code where the header would not be displayed
++		 */
++		goto valid_first_line;
++
++	while (fgets(buf, sizeof(buf), f)) {
++valid_first_line:
++		if ((cp = strchr(buf, ' ')) != NULL)
++			*cp = 0;
++		if ((cp = strchr(buf, '\t')) != NULL)
++			*cp = 0;
++		if (strcmp(buf, file) == 0) {
++			ret++;
++			break;
++		}
++	}
++
++leave:
++	fclose(f);
++	return ret;
++}
++
++
++/*
++ * check_mount_point() fills determines if the device is mounted or otherwise
++ * busy, and fills in mount_flags with one or more of the following flags:
++ * MF_MOUNTED, MF_ISROOT, MF_READONLY, MF_SWAP, and MF_BUSY.  If mtpt is
++ * non-NULL, the directory where the device is mounted is copied to where mtpt
++ * is pointing, up to mtlen characters.
++ */
++static int check_mount_point(const char *device, int *mount_flags,
++				  char *mtpt, int mtlen)
++{
++	int	retval = 0;
++
++	if (is_swap_device(device)) {
++		*mount_flags = MF_MOUNTED | MF_SWAP;
++		if (mtpt && mtlen)
++			strncpy(mtpt, "[SWAP]", mtlen);
++	} else {
++		retval = check_mntent(device, mount_flags, mtpt, mtlen);
++	}
++	return retval;
++}
++
++static int is_mounted(const char *file)
++{
++	int	retval;
++	int	mount_flags = 0;
++
++	retval = check_mount_point(file, &mount_flags, NULL, 0);
++	if (retval)
++		return 0;
++	return mount_flags & MF_MOUNTED;
++}
++
++#include "libmount.h"
++
++struct libmnt_fs *mnt_table_find_source(struct libmnt_table *tb,
++					const char *source, int direction)
++{
++	char *canon;
++	struct libmnt_fs *rc = NULL;
++	       
++	if (is_mounted(source))
++		return (void *)1;
++
++	canon = canonicalize_path(source);
++	if (strcmp(source, canon) && is_mounted(canon))
++		rc = (void *)1;
++	free(canon);
++	return rc;
++}
++
+diff --git a/usr/libmount.h b/usr/libmount.h
+new file mode 100644
+index 0000000..85f07f6
+--- /dev/null
++++ b/usr/libmount.h
+@@ -0,0 +1,17 @@
++#ifndef LIBMOUNT_H
++#define LIBMOUNT_H
++
++struct libmnt_table {};
++
++#define mnt_init_debug(lvl)		do {} while (0)
++#define mnt_new_table() 		((void *)1)
++#define mnt_free_table(tb)		do {} while (0)
++#define mnt_table_parse_mtab(tb, x)	do {} while (0)
++#define mnt_table_parse_swaps(tb, x)	do {} while (0)
++#define MNT_ITER_FORWARD		1
++
++struct libmnt_fs {};
++
++extern struct libmnt_fs *mnt_table_find_source(struct libmnt_table *tb, const char *source, int direction);
++
++#endif
+-- 
+2.1.0
+

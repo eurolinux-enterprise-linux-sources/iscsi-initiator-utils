@@ -1,0 +1,4608 @@
+From 7613cff039cadda024d52f03b503c68338295c66 Mon Sep 17 00:00:00 2001
+From: Adheer Chandravanshi <adheer.chandravanshi@qlogic.com>
+Date: Tue, 9 Jul 2013 08:17:14 -0400
+Subject: Upstream backports
+
+Resolves #1053374
+
+iscsiadm: Correctly check for invalid hostno and flashnode index
+iscsi tools: Print additional session info for flashnode session
+iscsi tools: sync iscsi_if.h with kernel space
+flashnode: Add support to set ISCSI_FLASHNODE_CHAP_OUT_IDX param
+iscsiadm: Use '-x' option instead of '-v' to specify chap_tbl_idx
+iscsiadm: Man page changes to use -x option for chap_tbl_idx
+README changes to use long option --index instead of --flashnode_idx
+iscsiadm: Add support to set CHAP entry using host chap mode
+iscsi tools: Correctly get username_in and password_in flashnode params
+README changes for adding support to set CHAP entry
+iscsi tools: Setup iface conf file with all iface attrs exported in sysfs
+iscsi_if.h: Remove numbers used for network parameter settings
+iscsi_if.h: Additional parameters for network param settings
+iscsi tools: Use macro to set IPv4/IPv6 IP addresses
+iscsi tools: Use single function to enable/disable network parameters
+iscsi tools: Use single function to set integer network parameters
+iscsi tools: Ignore network parameter if not enabled/disabled
+iscsi tools: Additional parameters for network settings
+iscsi tools: iface params should be updated for node_rec as well.
+iscsi tools: Let default type of iface be ipv4
+iscsi tools: Show iface params based on iface type
+iscsiadm: Added document for description of iface attributes
+iscsi_tool: Add offload host statistics support.
+README: Updated for host statistics.
+iscsiadm.8: Updated man page for host statistics.
+iscsi tools: Fix the iscsiadm help options for host mode
+Man page correction for host mode options of iscsiadm
+iscsiadm: Fix the hostno check for stats submode of host mode
+iscsiadm: Fix the compile time warning
+---
+ README                 |   54 ++-
+ doc/iscsiadm.8         |   15 +-
+ include/iscsi_if.h     |  450 ++++++++++++------
+ sysfs-documentation    |  514 ++++++++++++++++++++
+ usr/config.h           |   50 ++-
+ usr/flashnode.c        |    6 +
+ usr/flashnode.h        |    2 +
+ usr/host.c             |  110 +++++
+ usr/host.h             |    4 +
+ usr/idbm.c             |  256 +++++++++--
+ usr/idbm.h             |    1 +
+ usr/idbm_fields.h      |   49 ++
+ usr/iface.c            | 1234 +++++++++++++++++++++++++++++++++++++-----------
+ usr/initiator.c        |   12 +-
+ usr/initiator.h        |    1 +
+ usr/initiator_common.c |   38 +-
+ usr/iscsi_ipc.h        |    5 +
+ usr/iscsi_sysfs.c      |  204 ++++++++-
+ usr/iscsiadm.c         |  505 ++++++++++++++++++--
+ usr/netlink.c          |   72 +++
+ usr/session_info.c     |   24 +-
+ usr/types.h            |    1 +
+ 22 files changed, 3072 insertions(+), 535 deletions(-)
+ create mode 100644 sysfs-documentation
+
+diff --git a/README b/README
+index 98a00a9..3de1132 100644
+--- a/README
++++ b/README
+@@ -383,7 +383,7 @@ Usage: iscsiadm [OPTION]
+ 			  See below for examples.
+   -m iface --interface=iscsi_ifacename -C ping --ip=[ipaddr] --packetsize=[size]
+ 				--count=[count] --interval=[interval]
+-  -m host --host=hostno|MAC --print=level -C chap --op=[op] --value=[chap_tbl_idx]
++  -m host --host=hostno|MAC --print=level -C chap --op=[SHOW]
+ 			  Display information for a specific host. The host
+ 			  can be passed in by host number or by MAC address.
+ 			  If a host is not passed in then info
+@@ -396,6 +396,14 @@ Usage: iscsiadm [OPTION]
+ 			  is connected to.
+ 			  3 = Print iscsi params used.
+ 			  4 = Print SCSI info like LUNs, device state.
++  -m host --host=hostno|MAC -C chap --op=[DELETE] --index=[chap_tbl_idx]
++			   Delete chap entry at the given index from chap table.
++  -m host --host=hostno|MAC -C chap --op=[NEW | UPDATE] --index=[chap_tbl_idx] \
++				--name=[name] --value=[value]
++			  Add new or update existing chap entry at the given
++			  index with given username and password pair. If index
++			  is not passed then entry is added at the first free
++			  index in chap table.
+   -m host --host=hostno|MAC -C flashnode
+ 			  Display list of all the targets in adapter's
+ 			  flash (flash node), for the specified host,
+@@ -404,13 +412,13 @@ Usage: iscsiadm [OPTION]
+ 			  Create new flash node entry for the given host of the
+ 			  specified portal_type. This returns the index of the
+ 			  newly created entry on success.
+-  -m host --host=hostno|MAC -C flashnode --flashnode_idx=[flashnode index] \
++  -m host --host=hostno|MAC -C flashnode --index=[flashnode index] \
+ 				--op=[UPDATE] --name=[name] --value=[value]
+ 			  Update the params of the speficied flash node.
+ 			  The [name] and [value] pairs must be provided for the
+ 			  params that need to be updated. Multiple params can
+ 			  be updated using a single command.
+-  -m host --host=hostno|MAC -C flashnode--flashnode_idx=[flashnode index] \
++  -m host --host=hostno|MAC -C flashnode --index=[flashnode index] \
+ 				--op=[SHOW | DELETE | LOGIN | LOGOUT]
+ 			  op=DELETE|LOGIN|LOGOUT will perform deletion/login/
+ 			  logout operation on the specified flash node.
+@@ -1023,6 +1031,46 @@ To now log into targets it is the same as with sofware iscsi. See section
+     - Delete a flash node entry
+ 	    ./iscsiadm -m host -H 6 -C flashnode -x 1 -o delete
+ 
++    Host mode with chap submode:
++
++    - Display list of chap entries for a host
++
++	    ./iscsiadm -m host -H 6 -C chap -o show
++
++	This will list all the chap entries for the given host.
++
++    - Delete a chap entry for a host
++
++	    ./iscsiadm -m host -H 6 -C chap -o delete -x 5
++
++	This will delete any chap entry present at given index 5.
++
++    - Add/Update a local chap entry for a host
++
++	    ./iscsiadm -m host -H 6 -C chap -o update -x 4 -n username \
++			-v value -n password -v value
++
++	This will update the local chap entry present at index 4. If index 4
++	is free then entry of type local chap will be created at that index
++	with given username and password values.
++
++    - Add/Update a bidi chap entry for a host
++
++	    ./iscsiadm -m host -H 6 -C chap -o update -x 5 -n username_in \
++			-v value -n password_in -v value
++
++	This will update the bidi chap entry present at index 5. If index 5
++	is free then entry of type bidi chap will be created at that index
++	with given username_in and password_in values.
++
++    Host mode with stats submode:
++
++    - Display host statistics:
++	    ./iscsiadm -m host -H 6 -C stats
++
++	This will print the aggregate statistics on the host adapter port.
++	This includes MAC, TCP/IP, ECC & iSCSI statistics.
++
+ 6. Configuration
+ ================
+ 
+diff --git a/doc/iscsiadm.8 b/doc/iscsiadm.8
+index a57dce2..f737e0d 100644
+--- a/doc/iscsiadm.8
++++ b/doc/iscsiadm.8
+@@ -16,7 +16,7 @@ iscsiadm \- open-iscsi administration utility
+ 
+ \fBiscsiadm\fR \-m fw [\-l]
+ 
+-\fBiscsiadm\fR \-m host [ \-P printlevel ] [ \-H hostno|MAC ] [ [ \-C chap [ \-o operation ] [ \-v chap_tbl_idx ] ] | [ \-C flashnode [ \-o operation ] [ \-A portal_type ] [ \-x flashnode_idx ] [ \-n name ] [ \-v value ] ] ]
++\fBiscsiadm\fR \-m host [ \-P printlevel ] [ \-H hostno|MAC ] [ [ \-C chap [ \-x chap_tbl_idx ] ] | [ \-C flashnode [ \-A portal_type ] [ \-x flashnode_idx ] ] | [ \-C stats ] ] [ [ \-o operation ] [ \-n name ] [ \-v value ] ]
+ 
+ \fBiscsiadm\fR \-k priority
+ 
+@@ -72,12 +72,14 @@ Currently iscsiadm support ping as submode for iface. For example,
+ 
+ iscsiadm -m iface -I ifacename -C ping -a ipaddr -b packetsize -c count -i interval
+ 
+-For host, it supports chap and flashnode as submodes. For example,
++For host, it supports chap , flashnode and stats as submodes. For example,
+ 
+-iscsiadm -m host -H hostno -C chap -v chap_tbl_idx -o operation
++iscsiadm -m host -H hostno -C chap -x chap_tbl_idx -o operation
+ 
+ iscsiadm -m host -H hostno -C flashnode -x flashnode_idx -o operation
+ 
++iscsiadm -m host -H hostno -C stats
++
+ .TP
+ \fB\-d\fR, \fB\-\-debug=\fIdebug_level\fP
+ print debugging information. Valid values for debug_level are 0 to 8.
+@@ -279,6 +281,7 @@ tuple passed in.
+ .TP
+ \fB\-s\fR, \fB\-\-stats\fR
+ Display session statistics.
++This option when used with host mode, displays host statistics.
+ 
+ .TP
+ \fB\-S\fR, \fB\-\-show\fR
+@@ -320,10 +323,10 @@ This option is only valid for node mode and flashnode submode of host mode.
+ display version and exit
+ 
+ .TP
+-\fB\-x\fR, \fB\-\-flashnode_idx=\fIindex\fR
+-Specify the \fIindex\fR of the flash node to operate on.
++\fB\-x\fR, \fB\-\-index=\fIindex\fR
++Specify the \fIindex\fR of the entity to operate on.
+ .IP
+-This option is only valid for flashnode submode of host mode.
++This option is only valid for chap and flashnode submodes of host mode.
+ 
+ .SH DISCOVERY TYPES
+ iSCSI defines 3 discovery types: SendTargets, SLP, and iSNS.
+diff --git a/include/iscsi_if.h b/include/iscsi_if.h
+index b47dde7..9d15811 100644
+--- a/include/iscsi_if.h
++++ b/include/iscsi_if.h
+@@ -74,8 +74,9 @@ enum iscsi_uevent_e {
+ 	ISCSI_UEVENT_LOGIN_FLASHNODE	= UEVENT_BASE + 28,
+ 	ISCSI_UEVENT_LOGOUT_FLASHNODE	= UEVENT_BASE + 29,
+ 	ISCSI_UEVENT_LOGOUT_FLASHNODE_SID	= UEVENT_BASE + 30,
+-
+-	ISCSI_UEVENT_MAX		= ISCSI_UEVENT_LOGOUT_FLASHNODE_SID,
++	ISCSI_UEVENT_SET_CHAP		= UEVENT_BASE + 31,
++	ISCSI_UEVENT_GET_HOST_STATS	= UEVENT_BASE + 32,
++	ISCSI_UEVENT_MAX		= ISCSI_UEVENT_GET_HOST_STATS,
+ 
+ 	/* up events */
+ 	ISCSI_KEVENT_RECV_PDU		= KEVENT_BASE + 1,
+@@ -250,6 +251,10 @@ struct iscsi_uevent {
+ 			uint32_t	host_no;
+ 			uint32_t	sid;
+ 		} logout_flashnode_sid;
++		struct msg_get_host_stats {
++			uint32_t	host_no;
++		} get_host_stats;
++
+ 	} u;
+ 	union {
+ 		/* messages k -> u */
+@@ -318,8 +323,17 @@ enum iscsi_param_type {
+ 	ISCSI_HOST_PARAM,	/* iscsi_host_param */
+ 	ISCSI_NET_PARAM,	/* iscsi_net_param */
+ 	ISCSI_FLASHNODE_PARAM,	/* iscsi_flashnode_param */
++	ISCSI_CHAP_PARAM,	/* iscsi_chap_param */
++	ISCSI_IFACE_PARAM,	/* iscsi_iface_param */
+ };
+ 
++/* structure for minimalist usecase */
++struct iscsi_param_info {
++	uint32_t len;		/* Actual length of the param value */
++	uint16_t param;		/* iscsi param */
++	uint8_t value[0];	/* length sized value follows */
++} __attribute__((__packed__));
++
+ struct iscsi_iface_param_info {
+ 	uint32_t iface_num;	/* iface number, 0 - n */
+ 	uint32_t len;		/* Actual length of the param */
+@@ -383,28 +397,106 @@ struct iscsi_path {
+ #define ISCSI_VLAN_DISABLE	0x01
+ #define ISCSI_VLAN_ENABLE	0x02
+ 
++/* iscsi generic enable/disabled setting for various features */
++#define ISCSI_NET_PARAM_DISABLE		0x01
++#define ISCSI_NET_PARAM_ENABLE		0x02
++
+ /* iSCSI network params */
+ enum iscsi_net_param {
+ 	ISCSI_NET_PARAM_IPV4_ADDR		= 1,
+-	ISCSI_NET_PARAM_IPV4_SUBNET		= 2,
+-	ISCSI_NET_PARAM_IPV4_GW			= 3,
+-	ISCSI_NET_PARAM_IPV4_BOOTPROTO		= 4,
+-	ISCSI_NET_PARAM_MAC			= 5,
+-	ISCSI_NET_PARAM_IPV6_LINKLOCAL		= 6,
+-	ISCSI_NET_PARAM_IPV6_ADDR		= 7,
+-	ISCSI_NET_PARAM_IPV6_ROUTER		= 8,
+-	ISCSI_NET_PARAM_IPV6_ADDR_AUTOCFG	= 9,
+-	ISCSI_NET_PARAM_IPV6_LINKLOCAL_AUTOCFG	= 10,
+-	ISCSI_NET_PARAM_IPV6_ROUTER_AUTOCFG	= 11,
+-	ISCSI_NET_PARAM_IFACE_ENABLE		= 12,
+-	ISCSI_NET_PARAM_VLAN_ID			= 13,
+-	ISCSI_NET_PARAM_VLAN_PRIORITY		= 14,
+-	ISCSI_NET_PARAM_VLAN_ENABLED		= 15,
+-	ISCSI_NET_PARAM_VLAN_TAG		= 16,
+-	ISCSI_NET_PARAM_IFACE_TYPE		= 17,
+-	ISCSI_NET_PARAM_IFACE_NAME		= 18,
+-	ISCSI_NET_PARAM_MTU			= 19,
+-	ISCSI_NET_PARAM_PORT			= 20,
++	ISCSI_NET_PARAM_IPV4_SUBNET,
++	ISCSI_NET_PARAM_IPV4_GW,
++	ISCSI_NET_PARAM_IPV4_BOOTPROTO,
++	ISCSI_NET_PARAM_MAC,
++	ISCSI_NET_PARAM_IPV6_LINKLOCAL,
++	ISCSI_NET_PARAM_IPV6_ADDR,
++	ISCSI_NET_PARAM_IPV6_ROUTER,
++	ISCSI_NET_PARAM_IPV6_ADDR_AUTOCFG,
++	ISCSI_NET_PARAM_IPV6_LINKLOCAL_AUTOCFG,
++	ISCSI_NET_PARAM_IPV6_ROUTER_AUTOCFG,
++	ISCSI_NET_PARAM_IFACE_ENABLE,
++	ISCSI_NET_PARAM_VLAN_ID,
++	ISCSI_NET_PARAM_VLAN_PRIORITY,
++	ISCSI_NET_PARAM_VLAN_ENABLED,
++	ISCSI_NET_PARAM_VLAN_TAG,
++	ISCSI_NET_PARAM_IFACE_TYPE,
++	ISCSI_NET_PARAM_IFACE_NAME,
++	ISCSI_NET_PARAM_MTU,
++	ISCSI_NET_PARAM_PORT,
++	ISCSI_NET_PARAM_IPADDR_STATE,
++	ISCSI_NET_PARAM_IPV6_LINKLOCAL_STATE,
++	ISCSI_NET_PARAM_IPV6_ROUTER_STATE,
++	ISCSI_NET_PARAM_DELAYED_ACK_EN,
++	ISCSI_NET_PARAM_TCP_NAGLE_DISABLE,
++	ISCSI_NET_PARAM_TCP_WSF_DISABLE,
++	ISCSI_NET_PARAM_TCP_WSF,
++	ISCSI_NET_PARAM_TCP_TIMER_SCALE,
++	ISCSI_NET_PARAM_TCP_TIMESTAMP_EN,
++	ISCSI_NET_PARAM_CACHE_ID,
++	ISCSI_NET_PARAM_IPV4_DHCP_DNS_ADDR_EN,
++	ISCSI_NET_PARAM_IPV4_DHCP_SLP_DA_EN,
++	ISCSI_NET_PARAM_IPV4_TOS_EN,
++	ISCSI_NET_PARAM_IPV4_TOS,
++	ISCSI_NET_PARAM_IPV4_GRAT_ARP_EN,
++	ISCSI_NET_PARAM_IPV4_DHCP_ALT_CLIENT_ID_EN,
++	ISCSI_NET_PARAM_IPV4_DHCP_ALT_CLIENT_ID,
++	ISCSI_NET_PARAM_IPV4_DHCP_REQ_VENDOR_ID_EN,
++	ISCSI_NET_PARAM_IPV4_DHCP_USE_VENDOR_ID_EN,
++	ISCSI_NET_PARAM_IPV4_DHCP_VENDOR_ID,
++	ISCSI_NET_PARAM_IPV4_DHCP_LEARN_IQN_EN,
++	ISCSI_NET_PARAM_IPV4_FRAGMENT_DISABLE,
++	ISCSI_NET_PARAM_IPV4_IN_FORWARD_EN,
++	ISCSI_NET_PARAM_IPV4_TTL,
++	ISCSI_NET_PARAM_IPV6_GRAT_NEIGHBOR_ADV_EN,
++	ISCSI_NET_PARAM_IPV6_MLD_EN,
++	ISCSI_NET_PARAM_IPV6_FLOW_LABEL,
++	ISCSI_NET_PARAM_IPV6_TRAFFIC_CLASS,
++	ISCSI_NET_PARAM_IPV6_HOP_LIMIT,
++	ISCSI_NET_PARAM_IPV6_ND_REACHABLE_TMO,
++	ISCSI_NET_PARAM_IPV6_ND_REXMIT_TIME,
++	ISCSI_NET_PARAM_IPV6_ND_STALE_TMO,
++	ISCSI_NET_PARAM_IPV6_DUP_ADDR_DETECT_CNT,
++	ISCSI_NET_PARAM_IPV6_RTR_ADV_LINK_MTU,
++	ISCSI_NET_PARAM_REDIRECT_EN,
++};
++
++enum iscsi_ipaddress_state {
++	ISCSI_IPDDRESS_STATE_UNCONFIGURED,
++	ISCSI_IPDDRESS_STATE_ACQUIRING,
++	ISCSI_IPDDRESS_STATE_TENTATIVE,
++	ISCSI_IPDDRESS_STATE_VALID,
++	ISCSI_IPDDRESS_STATE_DISABLING,
++	ISCSI_IPDDRESS_STATE_INVALID,
++	ISCSI_IPDDRESS_STATE_DEPRECATED,
++};
++
++enum iscsi_router_state {
++	ISCSI_ROUTER_STATE_UNKNOWN,
++	ISCSI_ROUTER_STATE_ADVERTISED,
++	ISCSI_ROUTER_STATE_MANUAL,
++	ISCSI_ROUTER_STATE_STALE,
++};
++
++/* iSCSI specific settings params for iface */
++enum iscsi_iface_param {
++	ISCSI_IFACE_PARAM_DEF_TASKMGMT_TMO,
++	ISCSI_IFACE_PARAM_HDRDGST_EN,
++	ISCSI_IFACE_PARAM_DATADGST_EN,
++	ISCSI_IFACE_PARAM_IMM_DATA_EN,
++	ISCSI_IFACE_PARAM_INITIAL_R2T_EN,
++	ISCSI_IFACE_PARAM_DATASEQ_INORDER_EN,
++	ISCSI_IFACE_PARAM_PDU_INORDER_EN,
++	ISCSI_IFACE_PARAM_ERL,
++	ISCSI_IFACE_PARAM_MAX_RECV_DLENGTH,
++	ISCSI_IFACE_PARAM_FIRST_BURST,
++	ISCSI_IFACE_PARAM_MAX_R2T,
++	ISCSI_IFACE_PARAM_MAX_BURST,
++	ISCSI_IFACE_PARAM_CHAP_AUTH_EN,
++	ISCSI_IFACE_PARAM_BIDI_CHAP_EN,
++	ISCSI_IFACE_PARAM_DISCOVERY_AUTH_OPTIONAL,
++	ISCSI_IFACE_PARAM_DISCOVERY_LOGOUT_EN,
++	ISCSI_IFACE_PARAM_STRICT_LOGIN_COMP_EN,
++	ISCSI_IFACE_PARAM_INITIATOR_NAME,
+ };
+ 
+ enum iscsi_conn_state {
+@@ -496,50 +588,63 @@ enum iscsi_param {
+ 	ISCSI_PARAM_TGT_RESET_TMO,
+ 	ISCSI_PARAM_TARGET_ALIAS,
+ 
++	ISCSI_PARAM_CHAP_IN_IDX,
++	ISCSI_PARAM_CHAP_OUT_IDX,
++
+ 	ISCSI_PARAM_BOOT_ROOT,
+ 	ISCSI_PARAM_BOOT_NIC,
+ 	ISCSI_PARAM_BOOT_TARGET,
++
++	ISCSI_PARAM_AUTO_SND_TGT_DISABLE,
++	ISCSI_PARAM_DISCOVERY_SESS,
++	ISCSI_PARAM_PORTAL_TYPE,
++	ISCSI_PARAM_CHAP_AUTH_EN,
++	ISCSI_PARAM_DISCOVERY_LOGOUT_EN,
++	ISCSI_PARAM_BIDI_CHAP_EN,
++	ISCSI_PARAM_DISCOVERY_AUTH_OPTIONAL,
++
++	ISCSI_PARAM_DEF_TIME2WAIT,
++	ISCSI_PARAM_DEF_TIME2RETAIN,
++	ISCSI_PARAM_MAX_SEGMENT_SIZE,
++	ISCSI_PARAM_STATSN,
++	ISCSI_PARAM_KEEPALIVE_TMO,
++	ISCSI_PARAM_LOCAL_PORT,
++	ISCSI_PARAM_TSID,
++	ISCSI_PARAM_DEF_TASKMGMT_TMO,
++
++	ISCSI_PARAM_TCP_TIMESTAMP_STAT,
++	ISCSI_PARAM_TCP_WSF_DISABLE,
++	ISCSI_PARAM_TCP_NAGLE_DISABLE,
++	ISCSI_PARAM_TCP_TIMER_SCALE,
++	ISCSI_PARAM_TCP_TIMESTAMP_EN,
++	ISCSI_PARAM_TCP_XMIT_WSF,
++	ISCSI_PARAM_TCP_RECV_WSF,
++	ISCSI_PARAM_IP_FRAGMENT_DISABLE,
++	ISCSI_PARAM_IPV4_TOS,
++	ISCSI_PARAM_IPV6_TC,
++	ISCSI_PARAM_IPV6_FLOW_LABEL,
++	ISCSI_PARAM_IS_FW_ASSIGNED_IPV6,
++
++	ISCSI_PARAM_DISCOVERY_PARENT_IDX,
++	ISCSI_PARAM_DISCOVERY_PARENT_TYPE,
+ 	/* must always be last */
+ 	ISCSI_PARAM_MAX,
+ };
+ 
+-#define ISCSI_MAX_RECV_DLENGTH		(1ULL << ISCSI_PARAM_MAX_RECV_DLENGTH)
+-#define ISCSI_MAX_XMIT_DLENGTH		(1ULL << ISCSI_PARAM_MAX_XMIT_DLENGTH)
+-#define ISCSI_HDRDGST_EN		(1ULL << ISCSI_PARAM_HDRDGST_EN)
+-#define ISCSI_DATADGST_EN		(1ULL << ISCSI_PARAM_DATADGST_EN)
+-#define ISCSI_INITIAL_R2T_EN		(1ULL << ISCSI_PARAM_INITIAL_R2T_EN)
+-#define ISCSI_MAX_R2T			(1ULL << ISCSI_PARAM_MAX_R2T)
+-#define ISCSI_IMM_DATA_EN		(1ULL << ISCSI_PARAM_IMM_DATA_EN)
+-#define ISCSI_FIRST_BURST		(1ULL << ISCSI_PARAM_FIRST_BURST)
+-#define ISCSI_MAX_BURST			(1ULL << ISCSI_PARAM_MAX_BURST)
+-#define ISCSI_PDU_INORDER_EN		(1ULL << ISCSI_PARAM_PDU_INORDER_EN)
+-#define ISCSI_DATASEQ_INORDER_EN	(1ULL << ISCSI_PARAM_DATASEQ_INORDER_EN)
+-#define ISCSI_ERL			(1ULL << ISCSI_PARAM_ERL)
+-#define ISCSI_IFMARKER_EN		(1ULL << ISCSI_PARAM_IFMARKER_EN)
+-#define ISCSI_OFMARKER_EN		(1ULL << ISCSI_PARAM_OFMARKER_EN)
+-#define ISCSI_EXP_STATSN		(1ULL << ISCSI_PARAM_EXP_STATSN)
+-#define ISCSI_TARGET_NAME		(1ULL << ISCSI_PARAM_TARGET_NAME)
+-#define ISCSI_TPGT			(1ULL << ISCSI_PARAM_TPGT)
+-#define ISCSI_PERSISTENT_ADDRESS	(1ULL << ISCSI_PARAM_PERSISTENT_ADDRESS)
+-#define ISCSI_PERSISTENT_PORT		(1ULL << ISCSI_PARAM_PERSISTENT_PORT)
+-#define ISCSI_SESS_RECOVERY_TMO		(1ULL << ISCSI_PARAM_SESS_RECOVERY_TMO)
+-#define ISCSI_CONN_PORT			(1ULL << ISCSI_PARAM_CONN_PORT)
+-#define ISCSI_CONN_ADDRESS		(1ULL << ISCSI_PARAM_CONN_ADDRESS)
+-#define ISCSI_USERNAME			(1ULL << ISCSI_PARAM_USERNAME)
+-#define ISCSI_USERNAME_IN		(1ULL << ISCSI_PARAM_USERNAME_IN)
+-#define ISCSI_PASSWORD			(1ULL << ISCSI_PARAM_PASSWORD)
+-#define ISCSI_PASSWORD_IN		(1ULL << ISCSI_PARAM_PASSWORD_IN)
+-#define ISCSI_FAST_ABORT		(1ULL << ISCSI_PARAM_FAST_ABORT)
+-#define ISCSI_ABORT_TMO			(1ULL << ISCSI_PARAM_ABORT_TMO)
+-#define ISCSI_LU_RESET_TMO		(1ULL << ISCSI_PARAM_LU_RESET_TMO)
+-#define ISCSI_HOST_RESET_TMO		(1ULL << ISCSI_PARAM_HOST_RESET_TMO)
+-#define ISCSI_PING_TMO			(1ULL << ISCSI_PARAM_PING_TMO)
+-#define ISCSI_RECV_TMO			(1ULL << ISCSI_PARAM_RECV_TMO)
+-#define ISCSI_IFACE_NAME		(1ULL << ISCSI_PARAM_IFACE_NAME)
+-#define ISCSI_ISID			(1ULL << ISCSI_PARAM_ISID)
+-#define ISCSI_INITIATOR_NAME		(1ULL << ISCSI_PARAM_INITIATOR_NAME)
+-#define ISCSI_TGT_RESET_TMO		(1ULL << ISCSI_PARAM_TGT_RESET_TMO)
+-#define ISCSI_TARGET_ALIAS		(1ULL << ISCSI_PARAM_TARGET_ALIAS)
++/* iSCSI HBA params */
++enum iscsi_host_param {
++	ISCSI_HOST_PARAM_HWADDRESS,
++	ISCSI_HOST_PARAM_INITIATOR_NAME,
++	ISCSI_HOST_PARAM_NETDEV_NAME,
++	ISCSI_HOST_PARAM_IPADDRESS,
++	ISCSI_HOST_PARAM_PORT_STATE,
++	ISCSI_HOST_PARAM_PORT_SPEED,
++	ISCSI_HOST_PARAM_MAX,
++};
++
++/* portal type */
++#define PORTAL_TYPE_IPV4	"ipv4"
++#define PORTAL_TYPE_IPV6	"ipv6"
+ 
+ /* iSCSI Flash Target params */
+ enum iscsi_flashnode_param {
+@@ -607,106 +712,32 @@ enum iscsi_flashnode_param {
+ 	ISCSI_FLASHNODE_MAX,
+ };
+ 
+-#define ISCSI_FNODE_IS_FW_ASSIGNED_IPV6				\
+-	(1ULL << ISCSI_FLASHNODE_IS_FW_ASSIGNED_IPV6)
+-#define ISCSI_FNODE_PORTAL_TYPE		(1ULL << ISCSI_FLASHNODE_PORTAL_TYPE)
+-#define ISCSI_FNODE_AUTO_SND_TGT_DISABLE			\
+-	(1ULL << ISCSI_FLASHNODE_OPT_AUTO_SND_TGT_DISABLE)
+-#define ISCSI_FNODE_DISCOVERY_SESS				\
+-	(1ULL << ISCSI_FLASHNODE_OPT_DISCOVERY_SESS)
+-#define ISCSI_FNODE_ENTRY_EN		(1ULL << ISCSI_FLASHNODE_ENTRY_EN)
+-#define ISCSI_FNODE_HDR_DGST_EN		(1ULL << ISCSI_FLASHNODE_HDR_DGST_EN)
+-#define ISCSI_FNODE_DATA_DGST_EN	(1ULL << ISCSI_FLASHNODE_DATA_DGST_EN)
+-#define ISCSI_FNODE_IMM_DATA_EN		(1ULL << ISCSI_FLASHNODE_IMM_DATA_EN)
+-#define ISCSI_FNODE_INITIAL_R2T_EN	(1ULL << ISCSI_FLASHNODE_INITIAL_R2T_EN)
+-#define ISCSI_FNODE_DATASEQ_INORDER				\
+-	(1ULL << ISCSI_FLASHNODE_DATASEQ_INORDER)
+-#define ISCSI_FNODE_PDU_INORDER		(1ULL << ISCSI_FLASHNODE_PDU_INORDER)
+-#define ISCSI_FNODE_CHAP_AUTH_EN	(1ULL << ISCSI_FLASHNODE_CHAP_AUTH_EN)
+-#define ISCSI_FNODE_SNACK_REQ_EN	(1ULL << ISCSI_FLASHNODE_SNACK_REQ_EN)
+-#define ISCSI_FNODE_DISCOVERY_LOGOUT_EN				\
+-	(1ULL << ISCSI_FLASHNODE_DISCOVERY_LOGOUT_EN)
+-#define ISCSI_FNODE_BIDI_CHAP_EN	(1ULL << ISCSI_FLASHNODE_BIDI_CHAP_EN)
+-#define ISCSI_FNODE_DISCOVERY_AUTH_OPTIONAL			\
+-	(1ULL << ISCSI_FLASHNODE_DISCOVERY_AUTH_OPTIONAL)
+-#define ISCSI_FNODE_ERL			(1ULL << ISCSI_FLASHNODE_ERL)
+-#define ISCSI_FNODE_TCP_TIMESTAMP_STAT				\
+-	(1ULL << ISCSI_FLASHNODE_TCP_TIMESTAMP_STAT)
+-#define ISCSI_FNODE_TCP_NAGLE_DISABLE				\
+-	(1ULL << ISCSI_FLASHNODE_TCP_NAGLE_DISABLE)
+-#define ISCSI_FNODE_TCP_WSF_DISABLE				\
+-	(1ULL << ISCSI_FLASHNODE_TCP_WSF_DISABLE)
+-#define ISCSI_FNODE_TCP_TIMER_SCALE				\
+-	(1ULL << ISCSI_FLASHNODE_TCP_TIMER_SCALE)
+-#define ISCSI_FNODE_TCP_TIMESTAMP_ENABLE			\
+-	(1ULL << ISCSI_FLASHNODE_TCP_TIMESTAMP_ENABLE)
+-#define ISCSI_FNODE_IP_FRAG_DISABLE				\
+-	(1ULL << ISCSI_FLASHNODE_IP_FRAG_DISABLE)
+-#define ISCSI_FNODE_MAX_RECV_DLENGTH				\
+-	(1ULL << ISCSI_FLASHNODE_MAX_RECV_DLENGTH)
+-#define ISCSI_FNODE_MAX_XMIT_DLENGTH				\
+-	(1ULL << ISCSI_FLASHNODE_MAX_XMIT_DLENGTH)
+-#define ISCSI_FNODE_FIRST_BURST		(1ULL << ISCSI_FLASHNODE_FIRST_BURST)
+-#define ISCSI_FNODE_DEF_TIME2WAIT	(1ULL << ISCSI_FLASHNODE_DEF_TIME2WAIT)
+-#define ISCSI_FNODE_DEF_TIME2RETAIN	\
+-	(1ULL << ISCSI_FLASHNODE_DEF_TIME2RETAIN)
+-#define ISCSI_FNODE_MAX_R2T		(1ULL << ISCSI_FLASHNODE_MAX_R2T)
+-#define ISCSI_FNODE_KEEPALIVE_TMO	(1ULL << ISCSI_FLASHNODE_KEEPALIVE_TMO)
+-#define ISCSI_FNODE_ISID		(1ULL << ISCSI_FLASHNODE_ISID)
+-#define ISCSI_FNODE_TSID		(1ULL << ISCSI_FLASHNODE_TSID)
+-#define ISCSI_FNODE_PORT		(1ULL << ISCSI_FLASHNODE_PORT)
+-#define ISCSI_FNODE_MAX_BURST		(1ULL << ISCSI_FLASHNODE_MAX_BURST)
+-#define ISCSI_FNODE_DEF_TMF_TMO		(1ULL << ISCSI_FLASHNODE_DEF_TMF_TMO)
+-#define ISCSI_FNODE_IPADDR		(1ULL << ISCSI_FLASHNODE_IPADDR)
+-#define ISCSI_FNODE_ALIAS		(1ULL << ISCSI_FLASHNODE_ALIAS)
+-#define ISCSI_FNODE_REDIRECT_IPADDR	\
+-	(1ULL << ISCSI_FLASHNODE_REDIRECT_IPADDR)
+-#define ISCSI_FNODE_MAX_SEGMENT_SIZE	\
+-	(1ULL << ISCSI_FLASHNODE_MAX_SEGMENT_SIZE)
+-#define ISCSI_FNODE_LOCAL_PORT		(1ULL << ISCSI_FLASHNODE_LOCAL_PORT)
+-#define ISCSI_FNODE_IPV4_TOS		(1ULL << ISCSI_FLASHNODE_IPV4_TOS)
+-#define ISCSI_FNODE_IPV6_TC		(1ULL << ISCSI_FLASHNODE_IPV6_TC)
+-#define ISCSI_FNODE_IPV6_FLOW_LABEL	\
+-	(1ULL << ISCSI_FLASHNODE_IPV6_FLOW_LABEL)
+-#define ISCSI_FNODE_NAME		(1ULL << ISCSI_FLASHNODE_NAME)
+-#define ISCSI_FNODE_TPGT		(1ULL << ISCSI_FLASHNODE_TPGT)
+-#define ISCSI_FNODE_LINK_LOCAL_IPV6	\
+-	(1ULL << ISCSI_FLASHNODE_LINK_LOCAL_IPV6)
+-#define ISCSI_FNODE_DISCOVERY_PARENT_IDX	\
+-	(1ULL << ISCSI_FLASHNODE_DISCOVERY_PARENT_IDX)
+-#define ISCSI_FNODE_DISCOVERY_PARENT_TYPE	\
+-	(1ULL << ISCSI_FLASHNODE_DISCOVERY_PARENT_TYPE)
+-#define ISCSI_FNODE_TCP_XMIT_WSF	(1ULL << ISCSI_FLASHNODE_TCP_XMIT_WSF)
+-#define ISCSI_FNODE_TCP_RECV_WSF	(1ULL << ISCSI_FLASHNODE_TCP_RECV_WSF)
+-#define ISCSI_FNODE_CHAP_IN_IDX		(1ULL << ISCSI_FLASHNODE_CHAP_IN_IDX)
+-#define ISCSI_FNODE_CHAP_OUT_IDX	(1ULL << ISCSI_FLASHNODE_CHAP_OUT_IDX)
+-#define ISCSI_FNODE_USERNAME		(1ULL << ISCSI_FLASHNODE_USERNAME)
+-#define ISCSI_FNODE_USERNAME_IN		(1ULL << ISCSI_FLASHNODE_USERNAME_IN)
+-#define ISCSI_FNODE_PASSWORD		(1ULL << ISCSI_FLASHNODE_PASSWORD)
+-#define ISCSI_FNODE_PASSWORD_IN		(1ULL << ISCSI_FLASHNODE_PASSWORD_IN)
+-#define ISCSI_FNODE_STATSN		(1ULL << ISCSI_FLASHNODE_STATSN)
+-#define ISCSI_FNODE_EXP_STATSN		(1ULL << ISCSI_FLASHNODE_EXP_STATSN)
+-#define ISCSI_FNODE_IS_BOOT_TGT		(1ULL << ISCSI_FLASHNODE_IS_BOOT_TGT)
+-
+ struct iscsi_flashnode_param_info {
+ 	uint32_t len;		/* Actual length of the param */
+ 	uint16_t param;		/* iscsi param value */
+ 	uint8_t value[0];	/* length sized value follows */
+ } __attribute__((__packed__));
+ 
+-/* iSCSI HBA params */
+-enum iscsi_host_param {
+-	ISCSI_HOST_PARAM_HWADDRESS,
+-	ISCSI_HOST_PARAM_INITIATOR_NAME,
+-	ISCSI_HOST_PARAM_NETDEV_NAME,
+-	ISCSI_HOST_PARAM_IPADDRESS,
+-	ISCSI_HOST_PARAM_MAX,
++enum iscsi_discovery_parent_type {
++	ISCSI_DISC_PARENT_UNKNOWN	= 0x1,
++	ISCSI_DISC_PARENT_SENDTGT	= 0x2,
++	ISCSI_DISC_PARENT_ISNS		= 0x3,
++};
++
++/* iSCSI port Speed */
++enum iscsi_port_speed {
++	ISCSI_PORT_SPEED_UNKNOWN	= 0x1,
++	ISCSI_PORT_SPEED_10MBPS		= 0x2,
++	ISCSI_PORT_SPEED_100MBPS	= 0x4,
++	ISCSI_PORT_SPEED_1GBPS		= 0x8,
++	ISCSI_PORT_SPEED_10GBPS		= 0x10,
+ };
+ 
+-#define ISCSI_HOST_HWADDRESS		(1ULL << ISCSI_HOST_PARAM_HWADDRESS)
+-#define ISCSI_HOST_INITIATOR_NAME	(1ULL << ISCSI_HOST_PARAM_INITIATOR_NAME)
+-#define ISCSI_HOST_NETDEV_NAME		(1ULL << ISCSI_HOST_PARAM_NETDEV_NAME)
+-#define ISCSI_HOST_IPADDRESS		(1ULL << ISCSI_HOST_PARAM_IPADDRESS)
++/* iSCSI port state */
++enum iscsi_port_state {
++	ISCSI_PORT_STATE_DOWN		= 0x1,
++	ISCSI_PORT_STATE_UP		= 0x2,
++};
+ 
+ /* iSCSI PING status/error code */
+ enum iscsi_ping_status_code {
+@@ -743,7 +774,7 @@ enum iscsi_ping_status_code {
+ #define CAP_DIGEST_OFFLOAD	0x1000	/* offload hdr and data digests */
+ #define CAP_PADDING_OFFLOAD	0x2000	/* offload padding insertion, removal,
+ 					 and verification */
+-#define CAP_LOGIN_OFFLOAD	0x4000  /* offload normal session login */
++#define CAP_LOGIN_OFFLOAD	0x4000  /* offload session login */
+ 
+ /*
+  * These flags describes reason of stop_conn() call
+@@ -809,9 +840,16 @@ enum chap_type_e {
+ 	CHAP_TYPE_IN,
+ };
+ 
++enum iscsi_chap_param {
++	ISCSI_CHAP_PARAM_INDEX,
++	ISCSI_CHAP_PARAM_CHAP_TYPE,
++	ISCSI_CHAP_PARAM_USERNAME,
++	ISCSI_CHAP_PARAM_PASSWORD,
++	ISCSI_CHAP_PARAM_PASSWORD_LEN
++};
++
+ #define ISCSI_CHAP_AUTH_NAME_MAX_LEN	256
+ #define ISCSI_CHAP_AUTH_SECRET_MAX_LEN	256
+-
+ struct iscsi_chap_rec {
+ 	uint16_t chap_tbl_idx;
+ 	enum chap_type_e chap_type;
+@@ -820,4 +858,112 @@ struct iscsi_chap_rec {
+ 	uint8_t password_length;
+ };
+ 
++#define ISCSI_HOST_STATS_CUSTOM_MAX		32
++#define ISCSI_HOST_STATS_CUSTOM_DESC_MAX	64
++struct iscsi_host_stats_custom {
++	char desc[ISCSI_HOST_STATS_CUSTOM_DESC_MAX];
++	uint64_t value;
++};
++
++/* struct iscsi_offload_host_stats: Host statistics,
++ * Include statistics for MAC, IP, TCP & iSCSI.
++ */
++struct iscsi_offload_host_stats {
++	/* MAC */
++	uint64_t mactx_frames;
++	uint64_t mactx_bytes;
++	uint64_t mactx_multicast_frames;
++	uint64_t mactx_broadcast_frames;
++	uint64_t mactx_pause_frames;
++	uint64_t mactx_control_frames;
++	uint64_t mactx_deferral;
++	uint64_t mactx_excess_deferral;
++	uint64_t mactx_late_collision;
++	uint64_t mactx_abort;
++	uint64_t mactx_single_collision;
++	uint64_t mactx_multiple_collision;
++	uint64_t mactx_collision;
++	uint64_t mactx_frames_dropped;
++	uint64_t mactx_jumbo_frames;
++	uint64_t macrx_frames;
++	uint64_t macrx_bytes;
++	uint64_t macrx_unknown_control_frames;
++	uint64_t macrx_pause_frames;
++	uint64_t macrx_control_frames;
++	uint64_t macrx_dribble;
++	uint64_t macrx_frame_length_error;
++	uint64_t macrx_jabber;
++	uint64_t macrx_carrier_sense_error;
++	uint64_t macrx_frame_discarded;
++	uint64_t macrx_frames_dropped;
++	uint64_t mac_crc_error;
++	uint64_t mac_encoding_error;
++	uint64_t macrx_length_error_large;
++	uint64_t macrx_length_error_small;
++	uint64_t macrx_multicast_frames;
++	uint64_t macrx_broadcast_frames;
++	/* IP */
++	uint64_t iptx_packets;
++	uint64_t iptx_bytes;
++	uint64_t iptx_fragments;
++	uint64_t iprx_packets;
++	uint64_t iprx_bytes;
++	uint64_t iprx_fragments;
++	uint64_t ip_datagram_reassembly;
++	uint64_t ip_invalid_address_error;
++	uint64_t ip_error_packets;
++	uint64_t ip_fragrx_overlap;
++	uint64_t ip_fragrx_outoforder;
++	uint64_t ip_datagram_reassembly_timeout;
++	uint64_t ipv6tx_packets;
++	uint64_t ipv6tx_bytes;
++	uint64_t ipv6tx_fragments;
++	uint64_t ipv6rx_packets;
++	uint64_t ipv6rx_bytes;
++	uint64_t ipv6rx_fragments;
++	uint64_t ipv6_datagram_reassembly;
++	uint64_t ipv6_invalid_address_error;
++	uint64_t ipv6_error_packets;
++	uint64_t ipv6_fragrx_overlap;
++	uint64_t ipv6_fragrx_outoforder;
++	uint64_t ipv6_datagram_reassembly_timeout;
++	/* TCP */
++	uint64_t tcptx_segments;
++	uint64_t tcptx_bytes;
++	uint64_t tcprx_segments;
++	uint64_t tcprx_byte;
++	uint64_t tcp_duplicate_ack_retx;
++	uint64_t tcp_retx_timer_expired;
++	uint64_t tcprx_duplicate_ack;
++	uint64_t tcprx_pure_ackr;
++	uint64_t tcptx_delayed_ack;
++	uint64_t tcptx_pure_ack;
++	uint64_t tcprx_segment_error;
++	uint64_t tcprx_segment_outoforder;
++	uint64_t tcprx_window_probe;
++	uint64_t tcprx_window_update;
++	uint64_t tcptx_window_probe_persist;
++	/* ECC */
++	uint64_t ecc_error_correction;
++	/* iSCSI */
++	uint64_t iscsi_pdu_tx;
++	uint64_t iscsi_data_bytes_tx;
++	uint64_t iscsi_pdu_rx;
++	uint64_t iscsi_data_bytes_rx;
++	uint64_t iscsi_io_completed;
++	uint64_t iscsi_unexpected_io_rx;
++	uint64_t iscsi_format_error;
++	uint64_t iscsi_hdr_digest_error;
++	uint64_t iscsi_data_digest_error;
++	uint64_t iscsi_sequence_error;
++	/*
++	 * iSCSI Custom Host Statistics support, i.e. Transport could
++	 * extend existing host statistics with its own specific statistics
++	 * up to ISCSI_HOST_STATS_CUSTOM_MAX
++	 */
++	uint32_t custom_length;
++	struct iscsi_host_stats_custom custom[0]
++		 __attribute__ ((aligned (sizeof(uint64_t))));
++};
++
+ #endif
+diff --git a/sysfs-documentation b/sysfs-documentation
+new file mode 100644
+index 0000000..54fc497
+--- /dev/null
++++ b/sysfs-documentation
+@@ -0,0 +1,514 @@
++Description of iface attributes and their valid values
++======================================================
++
++== IPv4 attributes ==
++
++ipaddress
++---------
++IP address in format XXX.XXX.XXX.XXX
++
++gateway
++-------
++IP address of the network router or gateway device in format XXX.XXX.XXX.XXX
++
++subnet
++------
++Broadcast address in format XXX.XXX.XXX.XXX
++
++bootproto
++---------
++The protocol type used to initialize interface
++
++Valid values: "dhcp" or "static"
++
++dhcp_dns_address_en
++-------------------
++Request DNS Server IP Addresses and Domain Name
++
++If bootproto is set to dhcp and dhcp_dns_address_en is enable,
++requests DNS addresses (option 6) and domain name (option 15) in its
++DHCP parameter request list.
++
++Valid values: "enable" or "disable"
++
++dhcp_slp_da_info_en
++-------------------
++Request SLP DA Information and SLP Scope
++If bootproto is set to dhcp and dhcp_slp_da_info_en is enable,
++requests SLP DA information (option 78) and SLP scope (option 79)
++in its DHCP parameter request list.
++
++Valid values: "enable" or "disable"
++
++tos_en
++------
++Enable IPv4 type of service (ToS)
++
++When tos_en is set to enable, use value set in tos when transmitting IPv4 TCP
++packets on iSCSI connections.
++
++Valid values: "enable" or "disable"
++
++tos
++---
++IPv4 Type of service (ToS)
++
++When tos_en is set to enable, use value set in tos when transmitting IPv4 TCP
++packets on iSCSI connections.
++
++Valid range: 8-bit value. [0-255]
++
++grat_arp_en
++-----------
++Enable Gratuitous ARP Requests
++
++Valid values: "enable" or "disable"
++
++dhcp_alt_client_id_en
++---------------------
++DHCP Use Alternate Client ID
++
++When dhcp_alt_client_id_en is set to enable, use the Client ID configured in
++dhcp_alt_client_id as its Client ID (DHCP option 61) in outgoing DHCP messages.
++
++Valid values: "enable" or "disable"
++
++dhcp_alt_client_id
++------------------
++DHCP Alternate Client ID
++
++When dhcp_alt_client_id_en is set to enable, use value set in dhcp_alt_client_id
++for Client ID in DHCP messages.
++
++Valid values: 11-byte Client ID 
++
++dhcp_req_vendor_id_en
++---------------------
++DHCP Require Vendor ID
++
++When dhcp_req_vendor_id_en is set to enable, use value set in dhcp_vendor_id as
++its vendor ID (DHCP option 60) in outgoing DHCP messages.
++
++Valid values: "enable" or "disable"
++
++dhcp_use_vendor_id_en
++---------------------
++DHCP Use Vendor ID
++
++When dhcp_use_vendor_id_en is set to enable, use value set in dhcp_vendor_id as
++its vendor ID (DHCP option 60) in outgoing DHCP messages.
++
++Valid values: "enable" or "disable"
++
++dhcp_vendor_id
++--------------
++DHCP Vendor ID
++
++When dhcp_req_vendor_id_en or dhcp_use_vendor_id_en is set to enable,
++use value set in dhcp_vendor_id for Vendor ID in DHCP messages.
++
++Valid values: 11-byte Client ID 
++
++dhcp_learn_iqn_en
++-----------------
++DHCP Learn IQN
++
++When dhcp_learn_iqn_en is set to enable, iSCSI initiator attempts to use DHCP
++to learn its (IQN) iSCSI name.
++
++Valid values: "enable" or "disable"
++
++fragment_disable
++----------------
++Fragmentation Disable.
++
++When fragment_disable is set to disable, iSCSI initiator cannot fragment IP
++datagrams.
++
++Valid values: "enable" or "disable"
++
++incoming_forwarding_en
++----------------------
++When incoming_forwarding_en is set to enable, iSCSI initiator forwards all
++incoming network traffic to the network driver, except for iSCSI TCP packets
++destined to the iSCSI initiator.
++
++Valid values: "enable" or "disable"
++
++ttl
++---
++IPv4 Time to Live (TTL)
++
++This attribute contain TTL value sent in IPv4 TCP packets transmitted on
++iSCSI connections.
++
++Valid range: 8-bit value. [0-255]
++
++== IPv6 attributes ==
++
++ipaddress
++---------
++IP address in IPv6 format.
++
++link_local_addr
++---------------
++Link local address in IPv6 format.
++
++router_addr
++-----------
++Router address in IPv6 format.
++
++ipaddr_autocfg
++--------------
++Autoconfigure IPv6 Address.
++
++Valid values: nd, dhcpv6 or disable
++qla4xxx don't support dhcpv6.
++
++link_local_autocfg
++------------------
++Autoconfigure IPv6 Link Local Address.
++
++IPv6 neighbor discovery protocol to discover Link Local Address.
++
++Valid values: auto or disable
++
++
++router_autocfg
++--------------
++Autoconfigure IPv6 Router address.
++
++IPv6 neighbor discovery protocol to discover a default router address.
++
++Valid values: auto or disable
++
++link_local_state
++----------------
++This Read-only attribute show Link Local IP address state in sysfs.
++
++Valid values: Unconfigured, Acquiring, Tentative, Valid, Disabling, Invalid,
++	      Deprecated.
++
++
++router_state
++------------
++This Read-only attribute shows router state.
++
++Valid values: Unknown, Advertised, Manual, Stale.
++
++
++grat_neighbor_adv_en
++--------------------
++Enable Gratuitious Neighbor Advertisement
++
++Valid values: "enable" or "disable"
++
++mld_en
++------
++Enable IPv6 Multicast Listener Discovery
++
++Valid values: "enable" or "disable"
++
++flow_label
++----------
++This attribute specifies the default value of the Flow Label field in the
++IPv6 header of TCP packets transmitted on iSCSI connections
++
++Valid range: 20-bit value. [0-1048575]
++Value zero indicates that the traffic is not assigned to a labelled flow.
++
++traffic_class
++-------------
++This attribute specifies the IPv6 traffic class value to be used in IPv6
++TCP packets transmitted from the firmware on iSCSI connections.
++
++Valid range: 8-bit value. [0-255]
++
++hop_limit
++---------
++This attribute specifies the IPv6 hop limit value to be used in IPv6 TCP
++packets transmitted from the firmware on iSCSI connections
++
++Valid range: 8-bit value. [0-255]
++
++nd_reachable_tmo
++----------------
++This attribute specifies the time (in milliseconds) that a node assumes 
++that the neighbor is reachable after confirmation.
++
++Valid range: 4-byte value. [0-4294967295]
++
++nd_rexmit_time
++--------------
++This attribute specifies the time (in milliseconds) between retransmitted
++neighbor solicitation messages.
++
++Valid range: 4-byte value. [0-4294967295]
++
++nd_stale_tmo
++------------
++This attribute specifies the time (in milliseconds) after which a stale
++neighbor or destination cache entry is discarded.
++
++Valid range: 4-byte value. [0-4294967295]
++
++dup_addr_detect_cnt
++-------------------
++This attribute specifies the IPv6 duplicate address detection count
++
++Valid range: 8-bit value. [0-255]
++	     0 - Disable
++	     1 - TryOnce
++	     2 - TryTwice, and so on
++
++router_adv_link_mtu
++-------------------
++IPv6 Router Advertised Link MTU Size.
++
++Valid range: 1280 bytes to 1500 bytes
++
++== Common ==
++enabled
++-------
++This attribute is used to enable or disable IPv4 or IPv6 protocol.
++
++Valid values: "enable" or "disable"
++
++vlan_id
++-------
++This attribute specifies 12-bit VLAN identifier (VID)
++
++Valid range: 12-bit value. [1-4094]
++
++vlan_priority
++-------------
++This attribute specifies Priority to outbound packets containing the
++specified VLAN-ID (VID)
++
++Valid range: 3-bit value. [0-7]
++
++vlan_enabled
++------------
++VLAN Tagging Enable.
++
++When this attribute is set to enable, use value set in vlan_id and
++vlan_priority to transmit IP packets, and discards IP packets that were
++received without a matching VLAN ID
++
++Valid values: "enable" or "disable"
++
++mtu
++---
++Ethernet MTU Size.
++
++This field specifies the maximum payload length in byte of an
++Ethernet frame supported by iSCSI initiator.
++
++Valid values: 576 bytes to 9000 bytes
++
++port
++----
++This attribute shows the initiator iSCSI port number.
++
++ipaddress_state
++---------------
++This Read-only attribute show IP address state.
++
++Valid values: Unconfigured, Acquiring, Tentative, Valid, Disabling, Invalid,
++	      Deprecated.
++
++delayed_ack_en
++--------------
++When this attribute is set to enable, TCP delayed ACK is enabled.
++  
++Valid values: "enable" or "disable"
++
++tcp_nagle_disable
++-----------------
++When this attribute is set to disable, TCP Nagle algorithm is disabled.
++
++Valid values: "enable" or "disable"
++
++tcp_wsf_disable
++---------------
++When this attribute is set to disable, TCP window scale is disabled.
++
++Valid values: "enable" or "disable"
++
++tcp_wsf
++-------
++This attribute specifies the TCP window scale factor to be negotiated
++on TCP connections.
++
++Valid range: 8-bit value. [0-255]
++
++tcp_timer_scale
++---------------
++The TCP Timer Scale is scale factor that adjusts the time interval between
++timer ticks on a TCP connection. The scale factor allows for faster time-outs
++for connections running on a very small network, versus connections running
++on a very large network.
++
++Valid range: 3-bit value. [0-7]
++
++tcp_timestamp_en
++----------------
++When this attribute is set to enable, iSCSI initiator negotiates to use time
++stamps in TCP headers
++
++Valid values: "enable" or "disable"
++
++cache_id
++--------
++This Read-only attribute is used to find the valid cache entries for the
++interface.
++
++For IPv4, ARP cache entry
++For IPv6, Neighbor cache entry
++
++redirect_en
++-----------
++For IPv4:
++When this attribute is set to enable, an ARP redirect can modify the address
++resolution protocol (ARP) table and any active connections.
++
++For IPv6:
++When this attribute is set to enable and neighbor advertisements are received,
++the connection table is examined and updated if any active connections match
++the IP address on the neighbor advertisement. This action is required for
++failover and redirect.
++
++Valid values: "enable" or "disable"
++
++def_taskmgmt_tmo
++----------------
++This attribute specifies timeout interval in seconds that iSCSI uses for
++timing out task-management commands.
++
++Valid range: 16-bit value [0-65535].
++
++header_digest
++-------------
++When this attribute is set to enable iSCSI initiator negotiates for
++HeaderDigest=CRC32 and when set to disable negotiates HeaderDigest=none.
++
++Valid values: "enable" or "disable"
++
++data_digest
++-----------
++When this attribute is set to enable iSCSI initiator negotiates for
++DataDigest=CRC32 and when set to disable negotiates DataDigest=none.
++
++Valid values: "enable" or "disable"
++
++immediate_data
++--------------
++When this attribute is set to enable iSCSI initiator negotiates for
++ImmediateData=yes and When set to disable negotiates ImmediateData=none
++
++Valid values: "enable" or "disable"
++
++initial_r2t
++-----------
++When this attribute is set to enable iSCSI initiator negotiates for
++InitialR2T=yes. When set to disable negotiates InitialR2T=no.
++
++Valid values: "enable" or "disable"
++
++data_seq_in_order
++-----------------
++When this attribute is set to enable iSCSI initiator set data sequences
++in order
++
++Valid values: "enable" or "disable"
++qla4xxx does not support out-of-order data sequences
++
++data_pdu_in_order
++-----------------
++When this attribute is set to enable iSCSI initiator set Data PDU
++in order
++
++Valid values: "enable" or "disable"
++qla4xxx does not support out-of-order Data PDUs.
++
++erl
++---
++Error Recovery Level
++
++This attribute specifies error recovery level (ERL) supported by the
++connection.
++
++Valid values: 2-bit value [0-2]
++
++max_recv_dlength
++----------------
++iSCSI Maximum Receive Data Segment Length.
++
++This attribute specifies Maximum data segment length in bytes, that receive
++in an iSCSI PDU.
++
++first_burst_len
++---------------
++iSCSI First Burst Length
++
++This attribute Specifies the maximum amount of unsolicited data an iSCSI
++initiator can send to the target during the execution of a single SCSI command,
++in bytes.
++
++max_outstanding_r2t
++-------------------
++iSCSI Maximum Outstanding R2T
++
++This attribute Specifies how many R2T PDUs per command can be outstanding
++during an iSCSI session.
++
++max_burst_len
++-------------
++This attribute Specifies the maximum length for unsolicited or immediate data
++iSCSI session can send or receive.
++
++chap_auth
++---------
++When this attribute is set to enable iSCSI session performs authentication
++during the security state of login phase.
++
++Valid values: "enable" or "disable"
++
++bidi_chap
++---------
++When this attribute is set to enable iSCSI session generates a CHAP challenge
++to any target that has issued a CHAP challenge to the iSCSI session.
++iSCSI session issues the challenge to the target after responding to the
++targets challenge. This attribute is ignored if chap_auth is set to disable.
++
++Valid values: "enable" or "disable"
++
++discovery_auth_optional
++-----------------------
++When this attribute is set to enable and the chap_auth is set to enable,
++iSCSI session does not require authentication on discovery sessions unless
++requested by the peer. When this attribute is set to disable iSCSI session
++requires CHAP authentication for a discovery session.
++
++Valid values: "enable" or "disable"
++
++discovery_logout
++----------------
++When this attribute is set to enable, iSCSI initiator initiates an iSCSI logout
++on a discovery session when discovery is complete (before closing the connection).
++When this attribute is set to disable, iSCSI initiator closes the connection when
++discovery is complete.
++
++Valid values: "enable" or "disable"
++
++strict_login_comp_en
++--------------------
++When this attribute is set to enable, iSCSI initiator enforces the iSCSI login
++negotiation rules. When this attribute is set to disable, iSCSI initiator does
++not enforce iSCSI login negotiation.
++
++Valid values: "enable" or "disable"
++
++initiator_name
++--------------
++This Read-only attribute contains the iSCSI Name string used by the firmware.
+diff --git a/usr/config.h b/usr/config.h
+index d457bdd..fd31a54 100644
+--- a/usr/config.h
++++ b/usr/config.h
+@@ -232,11 +232,59 @@ typedef struct iface_rec {
+ 							   * 1 = enable */
+ 	uint16_t		mtu;
+ 	uint16_t		port;
++	char			delayed_ack[ISCSI_MAX_STR_LEN];
++	char			nagle[ISCSI_MAX_STR_LEN];
++	char			tcp_wsf_state[ISCSI_MAX_STR_LEN];
++	uint8_t			tcp_wsf;
++	uint8_t			tcp_timer_scale;
++	char			tcp_timestamp[ISCSI_MAX_STR_LEN];
++	char			dhcp_dns[ISCSI_MAX_STR_LEN];
++	char			dhcp_slp_da[ISCSI_MAX_STR_LEN];
++	char			tos_state[ISCSI_MAX_STR_LEN];
++	uint8_t			tos;
++	char			gratuitous_arp[ISCSI_MAX_STR_LEN];
++	char			dhcp_alt_client_id_state[ISCSI_MAX_STR_LEN];
++	char			dhcp_alt_client_id[ISCSI_MAX_STR_LEN];
++	char			dhcp_req_vendor_id_state[ISCSI_MAX_STR_LEN];
++	char			dhcp_vendor_id_state[ISCSI_MAX_STR_LEN];
++	char			dhcp_vendor_id[ISCSI_MAX_STR_LEN];
++	char			dhcp_learn_iqn[ISCSI_MAX_STR_LEN];
++	char			fragmentation[ISCSI_MAX_STR_LEN];
++	char			incoming_forwarding[ISCSI_MAX_STR_LEN];
++	uint8_t			ttl;
++	char			gratuitous_neighbor_adv[ISCSI_MAX_STR_LEN];
++	char			redirect[ISCSI_MAX_STR_LEN];
++	char			mld[ISCSI_MAX_STR_LEN];
++	uint32_t		flow_label;
++	uint32_t		traffic_class;
++	uint8_t			hop_limit;
++	uint32_t		nd_reachable_tmo;
++	uint32_t		nd_rexmit_time;
++	uint32_t		nd_stale_tmo;
++	uint8_t			dup_addr_detect_cnt;
++	uint32_t		router_adv_link_mtu;
++	uint16_t		def_task_mgmt_tmo;
++	char			header_digest[ISCSI_MAX_STR_LEN];
++	char			data_digest[ISCSI_MAX_STR_LEN];
++	char			immediate_data[ISCSI_MAX_STR_LEN];
++	char			initial_r2t[ISCSI_MAX_STR_LEN];
++	char			data_seq_inorder[ISCSI_MAX_STR_LEN];
++	char			data_pdu_inorder[ISCSI_MAX_STR_LEN];
++	uint8_t			erl;
++	uint32_t		max_recv_dlength;
++	uint32_t		first_burst_len;
++	uint16_t		max_out_r2t;
++	uint32_t		max_burst_len;
++	char			chap_auth[ISCSI_MAX_STR_LEN];
++	char			bidi_chap[ISCSI_MAX_STR_LEN];
++	char			strict_login_comp[ISCSI_MAX_STR_LEN];
++	char			discovery_auth[ISCSI_MAX_STR_LEN];
++	char			discovery_logout[ISCSI_MAX_STR_LEN];
+ 	char			port_state[ISCSI_MAX_STR_LEN];
+ 	char			port_speed[ISCSI_MAX_STR_LEN];
+ 	/*
+ 	 * TODO: we may have to make this bigger and interconnect
+-	 * specific for infinniband 
++	 * specific for infiniband
+ 	 */
+ 	char			hwaddress[ISCSI_HWADDRESS_BUF_SIZE];
+ 	char			transport_name[ISCSI_TRANSPORT_NAME_MAXLEN];
+diff --git a/usr/flashnode.c b/usr/flashnode.c
+index da1392a..fe5ab57 100644
+--- a/usr/flashnode.c
++++ b/usr/flashnode.c
+@@ -449,6 +449,12 @@ int flashnode_build_config(struct list_head *params,
+ 			    fnode->sess.portal_type,
+ 			    sizeof(fnode->sess.portal_type)))
+ 				count++;
++		} else if (!strcmp(param->name,
++			  to_key(FLASHNODE_SESS_CHAP_OUT_IDX))) {
++			if (!flashnode_fill_uint32(fnode, &iov[count],
++			    ISCSI_FLASHNODE_CHAP_OUT_IDX,
++			    fnode->sess.chap_out_idx))
++				count++;
+ 		} else if (!strcmp(param->name, to_key(FLASHNODE_CONN_PORT))) {
+ 			if (fnode->conn[0].port)
+ 				port = fnode->conn[0].port;
+diff --git a/usr/flashnode.h b/usr/flashnode.h
+index c1de9cc..2950fb5 100644
+--- a/usr/flashnode.h
++++ b/usr/flashnode.h
+@@ -26,6 +26,8 @@
+ #include "config.h"
+ #include "auth.h"
+ 
++#define MAX_FLASHNODE_IDX UINT_MAX
++
+ typedef enum portal_type {
+ 	IPV4,
+ 	IPV6,
+diff --git a/usr/host.c b/usr/host.c
+index 1fcb350..f2052d3 100644
+--- a/usr/host.c
++++ b/usr/host.c
+@@ -34,6 +34,7 @@
+ #include "initiator.h"
+ #include "iface.h"
+ #include "iscsi_err.h"
++#include "iscsi_netlink.h"
+ 
+ static int match_host_to_session(void *data, struct session_info *info)
+ {
+@@ -314,3 +315,112 @@ int host_info_print(int info_level, uint32_t host_no)
+ 	}
+ 	return 0;
+ }
++
++static int chap_fill_param_uint(struct iovec *iov, int param,
++				uint32_t param_val, int param_len)
++{
++	struct iscsi_param_info *param_info;
++	struct nlattr *attr;
++	int len;
++	uint8_t val8 = 0;
++	uint16_t val16 = 0;
++	uint32_t val32 = 0;
++	char *val = NULL;
++
++	len = sizeof(struct iscsi_param_info) + param_len;
++	iov->iov_base = iscsi_nla_alloc(param, len);
++	if (!iov->iov_base)
++		return 1;
++
++	attr = iov->iov_base;
++	iov->iov_len = NLA_ALIGN(attr->nla_len);
++
++	param_info = (struct iscsi_param_info *)ISCSI_NLA_DATA(attr);
++	param_info->param = param;
++	param_info->len = param_len;
++
++	switch (param_len) {
++	case 1:
++		val8 = (uint8_t)param_val;
++		val = (char *)&val8;
++		break;
++
++	case 2:
++		val16 = (uint16_t)param_val;
++		val = (char *)&val16;
++		break;
++
++	case 4:
++		val32 = (uint32_t)param_val;
++		val = (char *)&val32;
++		break;
++
++	default:
++		goto free;
++	}
++	memcpy(param_info->value, val, param_len);
++
++	return 0;
++
++free:
++	free(iov->iov_base);
++	iov->iov_base = NULL;
++	iov->iov_len = 0;
++	return 1;
++}
++
++static int chap_fill_param_str(struct iovec *iov, int param, char *param_val,
++			       int param_len)
++{
++	struct iscsi_param_info *param_info;
++	struct nlattr *attr;
++	int len;
++
++	len = sizeof(struct iscsi_param_info) + param_len;
++	iov->iov_base = iscsi_nla_alloc(param, len);
++	if (!iov->iov_base)
++		return 1;
++
++	attr = iov->iov_base;
++	iov->iov_len = NLA_ALIGN(attr->nla_len);
++
++	param_info = (struct iscsi_param_info *)ISCSI_NLA_DATA(attr);
++	param_info->param = param;
++	param_info->len = param_len;
++	memcpy(param_info->value, param_val, param_len);
++	return 0;
++}
++
++int chap_build_config(struct iscsi_chap_rec *crec, struct iovec *iovs)
++{
++	struct iovec *iov = NULL;
++	int count = 0;
++
++	/* start at 2, because 0 is for nlmsghdr and 1 for event */
++	iov = iovs + 2;
++
++	if (!chap_fill_param_uint(&iov[count], ISCSI_CHAP_PARAM_INDEX,
++				  crec->chap_tbl_idx,
++				  sizeof(crec->chap_tbl_idx)))
++		count++;
++
++	if (!chap_fill_param_uint(&iov[count], ISCSI_CHAP_PARAM_CHAP_TYPE,
++				  crec->chap_type, sizeof(crec->chap_type)))
++		count++;
++
++	if (!chap_fill_param_str(&iov[count], ISCSI_CHAP_PARAM_USERNAME,
++				 crec->username, strlen(crec->username)))
++		count++;
++
++	if (!chap_fill_param_str(&iov[count], ISCSI_CHAP_PARAM_PASSWORD,
++				 (char *)crec->password,
++				 strlen((char *)crec->password)))
++		count++;
++
++	if (!chap_fill_param_uint(&iov[count], ISCSI_CHAP_PARAM_PASSWORD_LEN,
++				  crec->password_length,
++				  sizeof(crec->password_length)))
++		count++;
++
++	return count;
++}
+diff --git a/usr/host.h b/usr/host.h
+index 894ab91..149aa0d 100644
+--- a/usr/host.h
++++ b/usr/host.h
+@@ -5,6 +5,9 @@
+ #include "types.h"
+ #include "config.h"
+ 
++#define MAX_HOST_NO UINT_MAX
++
++#define MAX_CHAP_ENTRIES 2048
+ #define MAX_CHAP_BUF_SZ 4096
+ #define REQ_CHAP_BUF_SZ (MAX_CHAP_BUF_SZ + sizeof(struct iscsi_uevent))
+ 
+@@ -14,5 +17,6 @@ struct host_info {
+ };
+ 
+ extern int host_info_print(int info_level, uint32_t host_no);
++extern int chap_build_config(struct iscsi_chap_rec *crec, struct iovec *iovs);
+ 
+ #endif
+diff --git a/usr/idbm.c b/usr/idbm.c
+index 530b29f..ff39438 100644
+--- a/usr/idbm.c
++++ b/usr/idbm.c
+@@ -240,6 +240,9 @@ void
+ idbm_recinfo_node(node_rec_t *r, recinfo_t *ri)
+ {
+ 	int num = 0, i;
++	int iface_type;
++
++	iface_type = iface_get_iptype(&r->iface);
+ 
+ 	__recinfo_str(NODE_NAME, ri, r, name, IDBM_SHOW, num, 0);
+ 	__recinfo_int(NODE_TPGT, ri, r, tpgt, IDBM_SHOW, num, 0);
+@@ -269,21 +272,6 @@ idbm_recinfo_node(node_rec_t *r, recinfo_t *ri)
+ 	__recinfo_str(IFACE_TRANSPORTNAME, ri, r, iface.transport_name,
+ 		      IDBM_SHOW, num, 1);
+ 	__recinfo_str(IFACE_INAME, ri, r, iface.iname, IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_BOOT_PROTO, ri, r, iface.bootproto, IDBM_SHOW,
+-		      num, 1);
+-	__recinfo_str(IFACE_SUBNET_MASK, ri, r, iface.subnet_mask,
+-		      IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_GATEWAY, ri, r, iface.gateway, IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_IPV6_AUTOCFG, ri, r, iface.ipv6_autocfg,
+-		      IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_LINKLOCAL_AUTOCFG, ri, r, iface.linklocal_autocfg,
+-		      IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_ROUTER_AUTOCFG, ri, r, iface.router_autocfg,
+-		      IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_LINKLOCAL, ri, r, iface.ipv6_linklocal,
+-		      IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_ROUTER, ri, r, iface.ipv6_router, IDBM_SHOW, num,
+-		      1);
+ 	__recinfo_str(IFACE_STATE, ri, r, iface.state, IDBM_SHOW, num, 1);
+ 	__recinfo_uint16(IFACE_VLAN_ID, ri, r, iface.vlan_id, IDBM_SHOW, num,
+ 			 1);
+@@ -295,6 +283,119 @@ idbm_recinfo_node(node_rec_t *r, recinfo_t *ri)
+ 	__recinfo_uint16(IFACE_MTU, ri, r, iface.mtu, IDBM_SHOW, num, 1);
+ 	__recinfo_uint16(IFACE_PORT, ri, r, iface.port, IDBM_SHOW, num, 1);
+ 
++	if (iface_type == ISCSI_IFACE_TYPE_IPV4) {
++		__recinfo_str(IFACE_BOOT_PROTO, ri, r, iface.bootproto,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_SUBNET_MASK, ri, r, iface.subnet_mask,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_GATEWAY, ri, r, iface.gateway, IDBM_SHOW,
++			      num, 1);
++		__recinfo_str(IFACE_DHCP_ALT_CID, ri, r,
++			      iface.dhcp_alt_client_id_state, IDBM_SHOW,
++			      num, 1);
++		__recinfo_str(IFACE_DHCP_ALT_CID_STR, ri, r,
++			      iface.dhcp_alt_client_id, IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_DHCP_DNS, ri, r, iface.dhcp_dns, IDBM_SHOW,
++			      num, 1);
++		__recinfo_str(IFACE_DHCP_LEARN_IQN, ri, r,
++			      iface.dhcp_learn_iqn, IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_DHCP_REQ_VID, ri, r,
++			      iface.dhcp_req_vendor_id_state, IDBM_SHOW,
++			      num, 1);
++		__recinfo_str(IFACE_DHCP_VID, ri, r, iface.dhcp_vendor_id_state,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_DHCP_VID_STR, ri, r, iface.dhcp_vendor_id,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_DHCP_SLP_DA, ri, r, iface.dhcp_slp_da,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_FRAGMENTATION, ri, r, iface.fragmentation,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_GRAT_ARP, ri, r, iface.gratuitous_arp,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_IN_FORWARD, ri, r,
++			      iface.incoming_forwarding, IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_TOS_STATE, ri, r, iface.tos_state,
++			      IDBM_SHOW, num, 1);
++		__recinfo_uint8(IFACE_TOS, ri, r, iface.tos, IDBM_SHOW, num, 1);
++		__recinfo_uint8(IFACE_TTL, ri, r, iface.ttl, IDBM_SHOW, num, 1);
++	} else if (iface_type == ISCSI_IFACE_TYPE_IPV6) {
++		__recinfo_str(IFACE_IPV6_AUTOCFG, ri, r, iface.ipv6_autocfg,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_LINKLOCAL_AUTOCFG, ri, r,
++			      iface.linklocal_autocfg, IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_ROUTER_AUTOCFG, ri, r, iface.router_autocfg,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_LINKLOCAL, ri, r, iface.ipv6_linklocal,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_ROUTER, ri, r, iface.ipv6_router,
++			      IDBM_SHOW, num, 1);
++		__recinfo_uint8(IFACE_DUP_ADDR_DETECT_CNT, ri, r,
++				iface.dup_addr_detect_cnt, IDBM_SHOW, num, 1);
++		__recinfo_uint32(IFACE_FLOW_LABEL, ri, r, iface.flow_label,
++				 IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_GRAT_NEIGHBOR_ADV, ri, r,
++			      iface.gratuitous_neighbor_adv, IDBM_SHOW, num, 1);
++		__recinfo_uint8(IFACE_HOP_LIMIT, ri, r, iface.hop_limit,
++				IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_MLD, ri, r, iface.mld, IDBM_SHOW, num, 1);
++		__recinfo_uint32(IFACE_ND_REACHABLE_TMO, ri, r,
++				 iface.nd_reachable_tmo, IDBM_SHOW, num, 1);
++		__recinfo_uint32(IFACE_ND_REXMIT_TIME, ri, r,
++				 iface.nd_rexmit_time, IDBM_SHOW, num, 1);
++		__recinfo_uint32(IFACE_ND_STALE_TMO, ri, r, iface.nd_stale_tmo,
++				 IDBM_SHOW, num, 1);
++		__recinfo_uint32(IFACE_RTR_ADV_LINK_MTU, ri, r,
++				 iface.router_adv_link_mtu, IDBM_SHOW, num, 1);
++		__recinfo_uint8(IFACE_TRAFFIC_CLASS, ri, r, iface.traffic_class,
++				IDBM_SHOW, num, 1);
++	}
++
++	__recinfo_str(IFACE_DELAYED_ACK, ri, r, iface.delayed_ack, IDBM_SHOW,
++		      num, 1);
++	__recinfo_str(IFACE_TCP_NAGLE, ri, r, iface.nagle, IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_TCP_WSF_STATE, ri, r, iface.tcp_wsf_state,
++		      IDBM_SHOW, num, 1);
++	__recinfo_uint8(IFACE_TCP_WSF, ri, r, iface.tcp_wsf, IDBM_SHOW, num, 1);
++	__recinfo_uint8(IFACE_TCP_TIMER_SCALE, ri, r, iface.tcp_timer_scale,
++			IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_TCP_TIMESTAMP, ri, r, iface.tcp_timestamp,
++		      IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_REDIRECT, ri, r, iface.redirect, IDBM_SHOW, num, 1);
++	__recinfo_uint16(IFACE_DEF_TMF_TMO, ri, r, iface.def_task_mgmt_tmo,
++			 IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_HDRDGST, ri, r, iface.header_digest, IDBM_SHOW,
++		      num, 1);
++	__recinfo_str(IFACE_DATADGST, ri, r, iface.data_digest, IDBM_SHOW,
++		      num, 1);
++	__recinfo_str(IFACE_IMM_DATA, ri, r, iface.immediate_data, IDBM_SHOW,
++		      num, 1);
++	__recinfo_str(IFACE_INITIAL_R2T, ri, r, iface.initial_r2t, IDBM_SHOW,
++		      num, 1);
++	__recinfo_str(IFACE_DSEQ_INORDER, ri, r, iface.data_seq_inorder,
++		      IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_DPDU_INORDER, ri, r, iface.data_pdu_inorder,
++		      IDBM_SHOW, num, 1);
++	__recinfo_uint8(IFACE_ERL, ri, r, iface.erl, IDBM_SHOW, num, 1);
++	__recinfo_uint32(IFACE_MAX_RECV_DLEN, ri, r, iface.max_recv_dlength,
++			 IDBM_SHOW, num, 1);
++	__recinfo_uint32(IFACE_FIRST_BURST, ri, r, iface.first_burst_len,
++			 IDBM_SHOW, num, 1);
++	__recinfo_uint16(IFACE_MAX_R2T, ri, r, iface.max_out_r2t, IDBM_SHOW,
++			 num, 1);
++	__recinfo_uint32(IFACE_MAX_BURST, ri, r, iface.max_burst_len, IDBM_SHOW,
++			 num, 1);
++	__recinfo_str(IFACE_CHAP_AUTH, ri, r, iface.chap_auth, IDBM_SHOW,
++		      num, 1);
++	__recinfo_str(IFACE_BIDI_CHAP, ri, r, iface.bidi_chap, IDBM_SHOW,
++		      num, 1);
++	__recinfo_str(IFACE_STRICT_LOGIN_COMP, ri, r, iface.strict_login_comp,
++		      IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_DISCOVERY_AUTH, ri, r, iface.discovery_auth,
++		      IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_DISCOVERY_LOGOUT, ri, r, iface.discovery_logout,
++		      IDBM_SHOW, num, 1);
++
++
+ 	__recinfo_str(NODE_DISC_ADDR, ri, r, disc_address, IDBM_SHOW,
+ 		      num, 0);
+ 	__recinfo_int(NODE_DISC_PORT, ri, r, disc_port, IDBM_SHOW,
+@@ -432,6 +533,9 @@ We do not support data digests
+ void idbm_recinfo_iface(iface_rec_t *r, recinfo_t *ri)
+ {
+ 	int num = 0;
++	int iface_type;
++
++	iface_type = iface_get_iptype(r);
+ 
+ 	__recinfo_str(IFACE_ISCSINAME, ri, r, name, IDBM_SHOW, num, 0);
+ 	__recinfo_str(IFACE_NETNAME, ri, r, netdev, IDBM_SHOW, num, 1);
+@@ -440,19 +544,6 @@ void idbm_recinfo_iface(iface_rec_t *r, recinfo_t *ri)
+ 	__recinfo_str(IFACE_TRANSPORTNAME, ri, r, transport_name,
+ 		      IDBM_SHOW, num, 1);
+ 	__recinfo_str(IFACE_INAME, ri, r, iname, IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_BOOT_PROTO, ri, r, bootproto, IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_SUBNET_MASK, ri, r, subnet_mask,
+-		      IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_GATEWAY, ri, r, gateway, IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_IPV6_AUTOCFG, ri, r, ipv6_autocfg,
+-		      IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_LINKLOCAL_AUTOCFG, ri, r, linklocal_autocfg,
+-		      IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_ROUTER_AUTOCFG, ri, r, router_autocfg,
+-		      IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_LINKLOCAL, ri, r, ipv6_linklocal,
+-		      IDBM_SHOW, num, 1);
+-	__recinfo_str(IFACE_ROUTER, ri, r, ipv6_router, IDBM_SHOW, num, 1);
+ 	__recinfo_str(IFACE_STATE, ri, r, state, IDBM_SHOW, num, 1);
+ 	__recinfo_uint16(IFACE_VLAN_ID, ri, r, vlan_id, IDBM_SHOW, num, 1);
+ 	__recinfo_uint8(IFACE_VLAN_PRIORITY, ri, r, vlan_priority,
+@@ -461,9 +552,110 @@ void idbm_recinfo_iface(iface_rec_t *r, recinfo_t *ri)
+ 	__recinfo_int(IFACE_NUM, ri, r, iface_num, IDBM_SHOW, num, 1);
+ 	__recinfo_uint16(IFACE_MTU, ri, r, mtu, IDBM_SHOW, num, 1);
+ 	__recinfo_uint16(IFACE_PORT, ri, r, port, IDBM_SHOW, num, 1);
++
++	if (iface_type == ISCSI_IFACE_TYPE_IPV4) {
++		__recinfo_str(IFACE_BOOT_PROTO, ri, r, bootproto, IDBM_SHOW,
++			      num, 1);
++		__recinfo_str(IFACE_SUBNET_MASK, ri, r, subnet_mask, IDBM_SHOW,
++			      num, 1);
++		__recinfo_str(IFACE_GATEWAY, ri, r, gateway, IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_DHCP_ALT_CID, ri, r,
++			      dhcp_alt_client_id_state, IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_DHCP_ALT_CID_STR, ri, r, dhcp_alt_client_id,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_DHCP_DNS, ri, r, dhcp_dns, IDBM_SHOW,
++			      num, 1);
++		__recinfo_str(IFACE_DHCP_LEARN_IQN, ri, r, dhcp_learn_iqn,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_DHCP_REQ_VID, ri, r,
++			      dhcp_req_vendor_id_state, IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_DHCP_VID, ri, r, dhcp_vendor_id_state,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_DHCP_VID_STR, ri, r, dhcp_vendor_id,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_DHCP_SLP_DA, ri, r, dhcp_slp_da, IDBM_SHOW,
++			      num, 1);
++		__recinfo_str(IFACE_FRAGMENTATION, ri, r, fragmentation,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_GRAT_ARP, ri, r, gratuitous_arp, IDBM_SHOW,
++			      num, 1);
++		__recinfo_str(IFACE_IN_FORWARD, ri, r, incoming_forwarding,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_TOS_STATE, ri, r, tos_state, IDBM_SHOW,
++			      num, 1);
++		__recinfo_uint8(IFACE_TOS, ri, r, tos, IDBM_SHOW, num, 1);
++		__recinfo_uint8(IFACE_TTL, ri, r, ttl, IDBM_SHOW, num, 1);
++	} else if (iface_type == ISCSI_IFACE_TYPE_IPV6) {
++		__recinfo_str(IFACE_IPV6_AUTOCFG, ri, r, ipv6_autocfg,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_LINKLOCAL_AUTOCFG, ri, r, linklocal_autocfg,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_ROUTER_AUTOCFG, ri, r, router_autocfg,
++			      IDBM_SHOW, num, 1);
++		__recinfo_str(IFACE_LINKLOCAL, ri, r, ipv6_linklocal, IDBM_SHOW,
++			      num, 1);
++		__recinfo_str(IFACE_ROUTER, ri, r, ipv6_router, IDBM_SHOW,
++			      num, 1);
++		__recinfo_uint8(IFACE_DUP_ADDR_DETECT_CNT, ri, r,
++				dup_addr_detect_cnt, IDBM_SHOW, num, 1);
++		__recinfo_uint32(IFACE_FLOW_LABEL, ri, r, flow_label, IDBM_SHOW,
++				 num, 1);
++		__recinfo_str(IFACE_GRAT_NEIGHBOR_ADV, ri, r,
++			      gratuitous_neighbor_adv, IDBM_SHOW, num, 1);
++		__recinfo_uint8(IFACE_HOP_LIMIT, ri, r, hop_limit, IDBM_SHOW,
++				num, 1);
++		__recinfo_str(IFACE_MLD, ri, r, mld, IDBM_SHOW, num, 1);
++		__recinfo_uint32(IFACE_ND_REACHABLE_TMO, ri, r,
++				 nd_reachable_tmo, IDBM_SHOW, num, 1);
++		__recinfo_uint32(IFACE_ND_REXMIT_TIME, ri, r, nd_rexmit_time,
++				 IDBM_SHOW, num, 1);
++		__recinfo_uint32(IFACE_ND_STALE_TMO, ri, r, nd_stale_tmo,
++				 IDBM_SHOW, num, 1);
++		__recinfo_uint32(IFACE_RTR_ADV_LINK_MTU, ri, r,
++				 router_adv_link_mtu, IDBM_SHOW, num, 1);
++		__recinfo_uint8(IFACE_TRAFFIC_CLASS, ri, r, traffic_class,
++				IDBM_SHOW, num, 1);
++	}
++
++	__recinfo_str(IFACE_DELAYED_ACK, ri, r, delayed_ack, IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_TCP_NAGLE, ri, r, nagle, IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_TCP_WSF_STATE, ri, r, tcp_wsf_state, IDBM_SHOW,
++		      num, 1);
++	__recinfo_uint8(IFACE_TCP_WSF, ri, r, tcp_wsf, IDBM_SHOW, num, 1);
++	__recinfo_uint8(IFACE_TCP_TIMER_SCALE, ri, r, tcp_timer_scale,
++			IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_TCP_TIMESTAMP, ri, r, tcp_timestamp, IDBM_SHOW,
++		      num, 1);
++	__recinfo_str(IFACE_REDIRECT, ri, r, redirect, IDBM_SHOW, num, 1);
++	__recinfo_uint16(IFACE_DEF_TMF_TMO, ri, r, def_task_mgmt_tmo, IDBM_SHOW,
++			 num, 1);
++	__recinfo_str(IFACE_HDRDGST, ri, r, header_digest, IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_DATADGST, ri, r, data_digest, IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_IMM_DATA, ri, r, immediate_data, IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_INITIAL_R2T, ri, r, initial_r2t, IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_DSEQ_INORDER, ri, r, data_seq_inorder, IDBM_SHOW,
++		      num, 1);
++	__recinfo_str(IFACE_DPDU_INORDER, ri, r, data_pdu_inorder, IDBM_SHOW,
++		      num, 1);
++	__recinfo_uint8(IFACE_ERL, ri, r, erl, IDBM_SHOW, num, 1);
++	__recinfo_uint32(IFACE_MAX_RECV_DLEN, ri, r, max_recv_dlength,
++			 IDBM_SHOW, num, 1);
++	__recinfo_uint32(IFACE_FIRST_BURST, ri, r, first_burst_len, IDBM_SHOW,
++			 num, 1);
++	__recinfo_uint16(IFACE_MAX_R2T, ri, r, max_out_r2t, IDBM_SHOW, num, 1);
++	__recinfo_uint32(IFACE_MAX_BURST, ri, r, max_burst_len, IDBM_SHOW,
++			 num, 1);
++	__recinfo_str(IFACE_CHAP_AUTH, ri, r, chap_auth, IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_BIDI_CHAP, ri, r, bidi_chap, IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_STRICT_LOGIN_COMP, ri, r, strict_login_comp,
++		      IDBM_SHOW, num, 1);
++	__recinfo_str(IFACE_DISCOVERY_AUTH, ri, r, discovery_auth, IDBM_SHOW,
++		      num, 1);
++	__recinfo_str(IFACE_DISCOVERY_LOGOUT, ri, r, discovery_logout,
++		      IDBM_SHOW, num, 1);
+ }
+ 
+-static void idbm_recinfo_host_chap(struct iscsi_chap_rec *r, recinfo_t *ri)
++void idbm_recinfo_host_chap(struct iscsi_chap_rec *r, recinfo_t *ri)
+ {
+ 	int num = 0;
+ 
+@@ -472,14 +664,14 @@ static void idbm_recinfo_host_chap(struct iscsi_chap_rec *r, recinfo_t *ri)
+ 
+ 	if (r->chap_type == CHAP_TYPE_OUT) {
+ 		__recinfo_str(HOST_AUTH_USERNAME, ri, r, username, IDBM_SHOW,
+-			      num, 0);
++			      num, 1);
+ 		__recinfo_str(HOST_AUTH_PASSWORD, ri, r, password, IDBM_MASKED,
+ 			      num, 1);
+ 		__recinfo_int(HOST_AUTH_PASSWORD_LEN, ri, r, password_length,
+ 			      IDBM_HIDE, num, 1);
+ 	} else {
+ 		__recinfo_str(HOST_AUTH_USERNAME_IN, ri, r, username, IDBM_SHOW,
+-			      num, 0);
++			      num, 1);
+ 		__recinfo_str(HOST_AUTH_PASSWORD_IN, ri, r, password,
+ 			      IDBM_MASKED, num, 1);
+ 		__recinfo_int(HOST_AUTH_PASSWORD_IN_LEN, ri, r, password_length,
+@@ -859,6 +1051,8 @@ updated:
+ 	check_password_param(discovery.sendtargets.auth.password_in);
+ 	check_password_param(discovery.slp.auth.password);
+ 	check_password_param(discovery.slp.auth.password_in);
++	check_password_param(host.auth.password);
++	check_password_param(host.auth.password_in);
+ 
+ 	return 0;
+ }
+diff --git a/usr/idbm.h b/usr/idbm.h
+index 1605473..a9bbace 100644
+--- a/usr/idbm.h
++++ b/usr/idbm.h
+@@ -191,6 +191,7 @@ extern struct node_rec *
+ idbm_create_rec_from_boot_context(struct boot_context *context);
+ 
+ extern int idbm_print_host_chap_info(struct iscsi_chap_rec *chap);
++extern void idbm_recinfo_host_chap(struct iscsi_chap_rec *r, recinfo_t *ri);
+ 
+ extern int idbm_print_flashnode_info(struct flashnode_rec *target);
+ extern void idbm_recinfo_flashnode(struct flashnode_rec *r, recinfo_t *ri);
+diff --git a/usr/idbm_fields.h b/usr/idbm_fields.h
+index 179dda8..5790a03 100644
+--- a/usr/idbm_fields.h
++++ b/usr/idbm_fields.h
+@@ -89,6 +89,55 @@
+ #define IFACE_NUM		"iface.iface_num"
+ #define IFACE_MTU		"iface.mtu"
+ #define IFACE_PORT		"iface.port"
++#define IFACE_DELAYED_ACK	"iface.delayed_ack"
++#define IFACE_TCP_NAGLE		"iface.tcp_nagle"
++#define IFACE_TCP_WSF_STATE	"iface.tcp_wsf_state"
++#define IFACE_TCP_WSF		"iface.tcp_wsf"
++#define IFACE_TCP_TIMER_SCALE	"iface.tcp_timer_scale"
++#define IFACE_TCP_TIMESTAMP	"iface.tcp_timestamp"
++#define IFACE_DHCP_DNS		"iface.dhcp_dns"
++#define IFACE_DHCP_SLP_DA	"iface.dhcp_slp_da"
++#define IFACE_TOS_STATE		"iface.tos_state"
++#define IFACE_TOS		"iface.tos"
++#define IFACE_GRAT_ARP		"iface.gratuitous_arp"
++#define IFACE_DHCP_ALT_CID	"iface.dhcp_alt_client_id_state"
++#define IFACE_DHCP_ALT_CID_STR	"iface.dhcp_alt_client_id"
++#define IFACE_DHCP_REQ_VID	"iface.dhcp_req_vendor_id_state"
++#define IFACE_DHCP_VID		"iface.dhcp_vendor_id_state"
++#define IFACE_DHCP_VID_STR	"iface.dhcp_vendor_id"
++#define IFACE_DHCP_LEARN_IQN	"iface.dhcp_learn_iqn"
++#define IFACE_FRAGMENTATION	"iface.fragmentation"
++#define IFACE_IN_FORWARD	"iface.incoming_forwarding"
++#define IFACE_TTL		"iface.ttl"
++#define IFACE_GRAT_NEIGHBOR_ADV	"iface.gratuitous_neighbor_adv"
++#define IFACE_REDIRECT		"iface.redirect"
++#define IFACE_IGNORE_ICMP_ECHO_REQ	"iface.ignore_icmp_echo_request"
++#define IFACE_MLD		"iface.mld"
++#define IFACE_FLOW_LABEL	"iface.flow_label"
++#define IFACE_TRAFFIC_CLASS	"iface.traffic_class"
++#define IFACE_HOP_LIMIT		"iface.hop_limit"
++#define IFACE_ND_REACHABLE_TMO	"iface.nd_reachable_tmo"
++#define IFACE_ND_REXMIT_TIME	"iface.nd_rexmit_time"
++#define IFACE_ND_STALE_TMO	"iface.nd_stale_tmo"
++#define IFACE_DUP_ADDR_DETECT_CNT	"iface.dup_addr_detect_cnt"
++#define IFACE_RTR_ADV_LINK_MTU	"iface.router_adv_link_mtu"
++#define IFACE_DEF_TMF_TMO	"iface.def_task_mgmt_timeout"
++#define IFACE_HDRDGST		"iface.header_digest"
++#define IFACE_DATADGST		"iface.data_digest"
++#define IFACE_IMM_DATA		"iface.immediate_data"
++#define IFACE_INITIAL_R2T	"iface.initial_r2t"
++#define IFACE_DSEQ_INORDER	"iface.data_seq_inorder"
++#define IFACE_DPDU_INORDER	"iface.data_pdu_inorder"
++#define IFACE_ERL		"iface.erl"
++#define IFACE_MAX_RECV_DLEN	"iface.max_receive_data_len"
++#define IFACE_FIRST_BURST	"iface.first_burst_len"
++#define IFACE_MAX_R2T		"iface.max_outstanding_r2t"
++#define IFACE_MAX_BURST		"iface.max_burst_len"
++#define IFACE_CHAP_AUTH		"iface.chap_auth"
++#define IFACE_BIDI_CHAP		"iface.bidi_chap"
++#define IFACE_STRICT_LOGIN_COMP	"iface.strict_login_compliance"
++#define IFACE_DISCOVERY_AUTH	"iface.discovery_auth"
++#define IFACE_DISCOVERY_LOGOUT	"iface.discovery_logout"
+ 
+ /* discovery fields */
+ #define DISC_STARTUP		"discovery.startup"
+diff --git a/usr/iface.c b/usr/iface.c
+index 29b46a2..40d7561 100644
+--- a/usr/iface.c
++++ b/usr/iface.c
+@@ -450,8 +450,10 @@ int iface_get_iptype(struct iface_rec *iface)
+ 		/* try to figure out by name */
+ 		if (strstr(iface->name, "ipv4"))
+ 			return ISCSI_IFACE_TYPE_IPV4;
+-		else
++		else if (strstr(iface->name, "ipv6"))
+ 			return ISCSI_IFACE_TYPE_IPV6;
++		else	/* assume ipv4 by default */
++			return ISCSI_IFACE_TYPE_IPV4;
+ 	} else {
+ 		if (strcmp(iface->bootproto, "dhcp") &&
+ 		    !strstr(iface->ipaddress, "."))
+@@ -476,11 +478,8 @@ static int iface_setup_binding_from_kern_iface(void *data,
+ 	}
+ 
+ 	memset(&iface, 0, sizeof(struct iface_rec));
+-	strcpy(iface.hwaddress, hinfo->iface.hwaddress);
+-	strcpy(iface.transport_name, hinfo->iface.transport_name);
+-
+ 	if (kern_iface) {
+-		iface.iface_num = kern_iface->iface_num;
++		memcpy(&iface, kern_iface, sizeof(iface));
+ 
+ 		snprintf(iface.name, sizeof(iface.name), "%s.%s.%s.%u",
+ 			 kern_iface->transport_name,
+@@ -492,6 +491,9 @@ static int iface_setup_binding_from_kern_iface(void *data,
+ 			 hinfo->iface.transport_name, hinfo->iface.hwaddress);
+ 	}
+ 
++	strcpy(iface.hwaddress, hinfo->iface.hwaddress);
++	strcpy(iface.transport_name, hinfo->iface.transport_name);
++
+ 	memset(iface_path, 0, sizeof(iface_path));
+ 	snprintf(iface_path, PATH_MAX, "%s/%s", IFACE_CONFIG_DIR,
+ 		 iface.name);
+@@ -601,6 +603,105 @@ void iface_copy(struct iface_rec *dst, struct iface_rec *src)
+ 		dst->mtu = src->mtu;
+ 	if (src->port)
+ 		dst->port = src->port;
++	if (strlen(src->delayed_ack))
++		strcpy(dst->delayed_ack, src->delayed_ack);
++	if (strlen(src->nagle))
++		strcpy(dst->nagle, src->nagle);
++	if (strlen(src->tcp_wsf_state))
++		strcpy(dst->tcp_wsf_state, src->tcp_wsf_state);
++	if (src->tcp_wsf)
++		dst->tcp_wsf = src->tcp_wsf;
++	if (src->tcp_timer_scale)
++		dst->tcp_timer_scale = src->tcp_timer_scale;
++	if (strlen(src->tcp_timestamp))
++		strcpy(dst->tcp_timestamp, src->tcp_timestamp);
++	if (strlen(src->dhcp_dns))
++		strcpy(dst->dhcp_dns, src->dhcp_dns);
++	if (strlen(src->dhcp_slp_da))
++		strcpy(dst->dhcp_slp_da, src->dhcp_slp_da);
++	if (strlen(src->tos_state))
++		strcpy(dst->tos_state, src->tos_state);
++	if (src->tos)
++		dst->tos = src->tos;
++	if (strlen(src->gratuitous_arp))
++		strcpy(dst->gratuitous_arp, src->gratuitous_arp);
++	if (strlen(src->dhcp_alt_client_id_state))
++		strcpy(dst->dhcp_alt_client_id_state,
++		       src->dhcp_alt_client_id_state);
++	if (strlen(src->dhcp_alt_client_id))
++		strcpy(dst->dhcp_alt_client_id, src->dhcp_alt_client_id);
++	if (strlen(src->dhcp_req_vendor_id_state))
++		strcpy(dst->dhcp_req_vendor_id_state,
++		       src->dhcp_req_vendor_id_state);
++	if (strlen(src->dhcp_vendor_id_state))
++		strcpy(dst->dhcp_vendor_id_state, src->dhcp_vendor_id_state);
++	if (strlen(src->dhcp_vendor_id))
++		strcpy(dst->dhcp_vendor_id, src->dhcp_vendor_id);
++	if (strlen(src->dhcp_learn_iqn))
++		strcpy(dst->dhcp_learn_iqn, src->dhcp_learn_iqn);
++	if (strlen(src->fragmentation))
++		strcpy(dst->fragmentation, src->fragmentation);
++	if (strlen(src->incoming_forwarding))
++		strcpy(dst->incoming_forwarding, src->incoming_forwarding);
++	if (src->ttl)
++		dst->ttl = src->ttl;
++	if (strlen(src->gratuitous_neighbor_adv))
++		strcpy(dst->gratuitous_neighbor_adv,
++		       src->gratuitous_neighbor_adv);
++	if (strlen(src->redirect))
++		strcpy(dst->redirect, src->redirect);
++	if (strlen(src->mld))
++		strcpy(dst->mld, src->mld);
++	if (src->flow_label)
++		dst->flow_label = src->flow_label;
++	if (src->traffic_class)
++		dst->traffic_class = src->traffic_class;
++	if (src->hop_limit)
++		dst->hop_limit = src->hop_limit;
++	if (src->nd_reachable_tmo)
++		dst->nd_reachable_tmo = src->nd_reachable_tmo;
++	if (src->nd_rexmit_time)
++		dst->nd_rexmit_time = src->nd_rexmit_time;
++	if (src->nd_stale_tmo)
++		dst->nd_stale_tmo = src->nd_stale_tmo;
++	if (src->dup_addr_detect_cnt)
++		dst->dup_addr_detect_cnt = src->dup_addr_detect_cnt;
++	if (src->router_adv_link_mtu)
++		dst->router_adv_link_mtu = src->router_adv_link_mtu;
++	if (src->def_task_mgmt_tmo)
++		dst->def_task_mgmt_tmo = src->def_task_mgmt_tmo;
++	if (strlen(src->header_digest))
++		strcpy(dst->header_digest, src->header_digest);
++	if (strlen(src->data_digest))
++		strcpy(dst->data_digest, src->data_digest);
++	if (strlen(src->immediate_data))
++		strcpy(dst->immediate_data, src->immediate_data);
++	if (strlen(src->initial_r2t))
++		strcpy(dst->initial_r2t, src->initial_r2t);
++	if (strlen(src->data_seq_inorder))
++		strcpy(dst->data_seq_inorder, src->data_seq_inorder);
++	if (strlen(src->data_pdu_inorder))
++		strcpy(dst->data_pdu_inorder, src->data_pdu_inorder);
++	if (src->erl)
++		dst->erl = src->erl;
++	if (src->max_recv_dlength)
++		dst->max_recv_dlength = src->max_recv_dlength;
++	if (src->first_burst_len)
++		dst->first_burst_len = src->first_burst_len;
++	if (src->max_out_r2t)
++		dst->max_out_r2t = src->max_out_r2t;
++	if (src->max_burst_len)
++		dst->max_burst_len = src->max_burst_len;
++	if (strlen(src->chap_auth))
++		strcpy(dst->chap_auth, src->chap_auth);
++	if (strlen(src->bidi_chap))
++		strcpy(dst->bidi_chap, src->bidi_chap);
++	if (strlen(src->strict_login_comp))
++		strcpy(dst->strict_login_comp, src->strict_login_comp);
++	if (strlen(src->discovery_auth))
++		strcpy(dst->discovery_auth, src->discovery_auth);
++	if (strlen(src->discovery_logout))
++		strcpy(dst->discovery_logout, src->discovery_logout);
+ 	if (strlen(src->hwaddress))
+ 		strcpy(dst->hwaddress, src->hwaddress);
+ 	if (strlen(src->transport_name))
+@@ -1020,6 +1121,79 @@ struct iface_param_count {
+ 	int count;
+ };
+ 
++#define IFACE_NET_PARAM_EN_CNT(param_val, cnt) {	\
++	if (!strcmp(param_val, "disable") ||		\
++	    !strcmp(param_val, "enable"))		\
++		(*cnt)++;				\
++}
++
++/**
++ * iface_get_common_param_count - Gets common parameters count for given iface
++ * @iface: iface to setup
++ * @count: number of parameters to set
++ */
++static void iface_get_common_param_count(struct iface_rec *iface, int *count)
++{
++	if (strcmp(iface->vlan_state, "disable")) {
++		/* vlan_state enabled */
++		(*count)++;
++
++		if (iface->vlan_id)
++			/* For vlan value */
++			(*count)++;
++	} else {
++		/* vlan_state disabled */
++		(*count)++;
++	}
++
++	if (iface->mtu)
++		(*count)++;
++
++	if (iface->port)
++		(*count)++;
++
++	IFACE_NET_PARAM_EN_CNT(iface->delayed_ack, count);
++	IFACE_NET_PARAM_EN_CNT(iface->nagle, count);
++	IFACE_NET_PARAM_EN_CNT(iface->tcp_wsf_state, count);
++	IFACE_NET_PARAM_EN_CNT(iface->tcp_timestamp, count);
++	IFACE_NET_PARAM_EN_CNT(iface->redirect, count);
++	IFACE_NET_PARAM_EN_CNT(iface->header_digest, count);
++	IFACE_NET_PARAM_EN_CNT(iface->data_digest, count);
++	IFACE_NET_PARAM_EN_CNT(iface->immediate_data, count);
++	IFACE_NET_PARAM_EN_CNT(iface->initial_r2t, count);
++	IFACE_NET_PARAM_EN_CNT(iface->data_seq_inorder, count);
++	IFACE_NET_PARAM_EN_CNT(iface->data_pdu_inorder, count);
++	IFACE_NET_PARAM_EN_CNT(iface->chap_auth, count);
++	IFACE_NET_PARAM_EN_CNT(iface->bidi_chap, count);
++	IFACE_NET_PARAM_EN_CNT(iface->strict_login_comp, count);
++	IFACE_NET_PARAM_EN_CNT(iface->discovery_auth, count);
++	IFACE_NET_PARAM_EN_CNT(iface->discovery_logout, count);
++
++	if (iface->tcp_wsf)
++		(*count)++;
++
++	if (iface->tcp_timer_scale)
++		(*count)++;
++
++	if (iface->def_task_mgmt_tmo)
++		(*count)++;
++
++	if (iface->erl)
++		(*count)++;
++
++	if (iface->max_recv_dlength)
++		(*count)++;
++
++	if (iface->first_burst_len)
++		(*count)++;
++
++	if (iface->max_burst_len)
++		(*count)++;
++
++	if (iface->max_out_r2t)
++		(*count)++;
++}
++
+ /**
+  * __iface_get_param_count - Gets netconfig parameter count for given iface
+  * @data: iface_param_count structure
+@@ -1038,10 +1212,10 @@ static int __iface_get_param_count(void *data, struct iface_rec *iface)
+ 	if (iptype == ISCSI_IFACE_TYPE_IPV4) {
+ 
+ 		if (strcmp(iface->state, "disable")) {
+-			if (strstr(iface->bootproto, "dhcp"))
++			if (strstr(iface->bootproto, "dhcp")) {
+ 				/* DHCP enabled */
+ 				count++;
+-			else {
++			} else {
+ 				/* DHCP disabled */
+ 				count++;
+ 
+@@ -1056,12 +1230,13 @@ static int __iface_get_param_count(void *data, struct iface_rec *iface)
+ 					if (strstr(iface->gateway, "."))
+ 						/* User configured Gateway */
+ 						count++;
+-				} else
++				} else {
+ 					/*
+ 					 * IPv4 Address not valid, decrement
+ 					 * count of DHCP
+ 					 */
+ 					count--;
++				}
+ 			}
+ 
+ 			/*
+@@ -1072,37 +1247,68 @@ static int __iface_get_param_count(void *data, struct iface_rec *iface)
+ 				/* iface state */
+ 				count++;
+ 
+-				if (strcmp(iface->vlan_state, "disable")) {
+-					/* vlan_state enabled */
++				IFACE_NET_PARAM_EN_CNT(iface->dhcp_dns,
++						       &count);
++
++				IFACE_NET_PARAM_EN_CNT(iface->dhcp_slp_da,
++						       &count);
++
++				IFACE_NET_PARAM_EN_CNT(iface->tos_state,
++						       &count);
++
++				IFACE_NET_PARAM_EN_CNT(iface->gratuitous_arp,
++						       &count);
++
++				IFACE_NET_PARAM_EN_CNT(
++						iface->dhcp_alt_client_id_state,
++						&count);
++
++				if (iface->dhcp_alt_client_id[0])
+ 					count++;
+ 
+-					if (iface->vlan_id)
+-						/* For vlan value */
+-						count++;
+-				} else
+-					/* vlan_state disabled */
++				IFACE_NET_PARAM_EN_CNT(
++						iface->dhcp_req_vendor_id_state,
++						&count);
++
++				IFACE_NET_PARAM_EN_CNT(
++						iface->dhcp_vendor_id_state,
++						&count);
++
++				if (iface->dhcp_vendor_id[0])
+ 					count++;
+ 
+-				if (iface->mtu)
++				IFACE_NET_PARAM_EN_CNT(iface->dhcp_learn_iqn,
++						       &count);
++
++				IFACE_NET_PARAM_EN_CNT(iface->fragmentation,
++						       &count);
++
++				IFACE_NET_PARAM_EN_CNT(
++						     iface->incoming_forwarding,
++						     &count);
++
++				if (iface->tos)
+ 					count++;
+ 
+-				if (iface->port)
++				if (iface->ttl)
+ 					count++;
++
++				iface_get_common_param_count(iface, &count);
+ 			}
+-		} else
++		} else {
+ 			/* IPv4 is disabled, iface state */
+ 			count++;
+-
++		}
+ 	} else if (iptype == ISCSI_IFACE_TYPE_IPV6) {
+ 
+ 		if (strcmp(iface->state, "disable")) {
+ 
+ 			/* IPv6 Address */
+ 			if (strstr(iface->ipv6_autocfg, "nd") ||
+-			    strstr(iface->ipv6_autocfg, "dhcpv6"))
++			    strstr(iface->ipv6_autocfg, "dhcpv6")) {
+ 				/* Autocfg enabled */
+ 				count++;
+-			else {
++			} else {
+ 				/* Autocfg disabled */
+ 				count++;
+ 
+@@ -1163,26 +1369,42 @@ static int __iface_get_param_count(void *data, struct iface_rec *iface)
+ 				/* iface state */
+ 				count++;
+ 
+-				if (strcmp(iface->vlan_state, "disable")) {
+-					/* vlan_state enabled */
++				IFACE_NET_PARAM_EN_CNT(
++						 iface->gratuitous_neighbor_adv,
++						 &count);
++
++				IFACE_NET_PARAM_EN_CNT(iface->mld, &count);
++
++				if (iface->flow_label)
+ 					count++;
+ 
+-					if (iface->vlan_id)
+-						/* For vlan value */
+-						count++;
+-				} else
+-					/* vlan_state disabled */
++				if (iface->traffic_class)
+ 					count++;
+ 
+-				if (iface->mtu)
++				if (iface->hop_limit)
+ 					count++;
+ 
+-				if (iface->port)
++				if (iface->nd_reachable_tmo)
+ 					count++;
++
++				if (iface->nd_rexmit_time)
++					count++;
++
++				if (iface->nd_stale_tmo)
++					count++;
++
++				if (iface->dup_addr_detect_cnt)
++					count++;
++
++				if (iface->router_adv_link_mtu)
++					count++;
++
++				iface_get_common_param_count(iface, &count);
+ 			}
+-		} else
++		} else {
+ 			/* IPv6 is disabled, iface state */
+ 			count++;
++		}
+ 	}
+ 
+ 	iface_params->count += count;
+@@ -1217,58 +1439,68 @@ int iface_get_param_count(struct iface_rec *iface, int iface_all)
+ 	return iface_params.count;
+ }
+ 
+-/* IPv4/IPv6 Port: 3260 or User defined */
+-static int iface_fill_port(struct iovec *iov, struct iface_rec *iface,
+-			   uint32_t iface_type)
++/* write integer parameter value */
++static int iface_fill_int_param_val(struct iovec *iov, uint32_t iface_num,
++				    uint8_t iface_type, uint16_t param,
++				    uint8_t param_type, uint32_t param_len,
++				    uint32_t param_val)
+ {
+ 	int len;
+ 	struct iscsi_iface_param_info *net_param;
+-	uint16_t port = 3260;
+ 	struct nlattr *attr;
++	uint8_t val8 = 0;
++	uint16_t val16 = 0;
++	uint32_t val32 = 0;
++	char *val = NULL;
+ 
+-	len = sizeof(struct iscsi_iface_param_info) + sizeof(port);
+-	iov->iov_base = iscsi_nla_alloc(ISCSI_NET_PARAM_PORT, len);
+-	if (!iov->iov_base)
++	len = sizeof(struct iscsi_iface_param_info) + param_len;
++	iov->iov_base = iscsi_nla_alloc(param, len);
++	if (!(iov->iov_base))
+ 		return 1;
++
+ 	attr = iov->iov_base;
+ 	iov->iov_len = NLA_ALIGN(attr->nla_len);
+-
+ 	net_param = (struct iscsi_iface_param_info *)ISCSI_NLA_DATA(attr);
+-	net_param->param = ISCSI_NET_PARAM_PORT;
++	net_param->iface_num = iface_num;
++	net_param->len = param_len;
++	net_param->param = param;
+ 	net_param->iface_type = iface_type;
+-	net_param->iface_num = iface->iface_num;
+-	net_param->param_type = ISCSI_NET_PARAM;
+-	net_param->len = 2;
+-	if (iface->port)
+-		port = iface->port;
+-	memcpy(net_param->value, &port, net_param->len);
+-	return 0;
+-}
++	net_param->param_type = param_type;
++	switch (param_len) {
++	case 1:
++		val8 = (uint8_t)param_val;
++		val = (char *)&val8;
++		break;
+ 
+-static int iface_fill_mtu(struct iovec *iov, struct iface_rec *iface,
+-			  uint32_t iface_type)
+-{
+-	int len;
+-	struct iscsi_iface_param_info *net_param;
+-	uint16_t mtu = 0;
+-	struct nlattr *attr;
++	case 2:
++		val16 = (uint16_t)param_val;
++		val = (char *)&val16;
++		break;
+ 
+-	len = sizeof(struct iscsi_iface_param_info) + 2;
+-	iov->iov_base = iscsi_nla_alloc(ISCSI_NET_PARAM_MTU, len);
+-	if (!(iov->iov_base))
+-		return 1;
+-	attr = iov->iov_base;
+-	iov->iov_len = NLA_ALIGN(attr->nla_len);
++	case 4:
++		val32 = (uint32_t)param_val;
++		val = (char *)&val32;
++		break;
+ 
+-	net_param = (struct iscsi_iface_param_info *)ISCSI_NLA_DATA(attr);
+-	net_param->param = ISCSI_NET_PARAM_MTU;
+-	net_param->iface_type = iface_type;
+-	net_param->iface_num = iface->iface_num;
+-	net_param->param_type = ISCSI_NET_PARAM;
+-	net_param->len = 2;
+-	mtu = iface->mtu;
+-	memcpy(net_param->value, &mtu, net_param->len);
++	default:
++		goto free;
++	}
++	memcpy(net_param->value, val, param_len);
+ 	return 0;
++free:
++	free(iov->iov_base);
++	iov->iov_base = NULL;
++	iov->iov_len = 0;
++	return 1;
++}
++
++#define IFACE_SET_PARAM_INTVAL(iov, inum, itype, param, ptype, plen,	\
++			       ival, gcnt, lcnt) {			\
++	if (ival && !iface_fill_int_param_val(iov, inum, itype, param,	\
++					      ptype, plen, ival)) {	\
++		(*gcnt)++;						\
++		(*lcnt)++;						\
++	}								\
+ }
+ 
+ /* IPv4/IPv6 VLAN_ID: decimal value <= 4095 */
+@@ -1305,60 +1537,52 @@ static int iface_fill_vlan_id(struct iovec *iov, struct iface_rec *iface,
+ 	return 0;
+ }
+ 
+-/* IPv4/IPv6 VLAN state: disable/enable */
+-static int iface_fill_vlan_state(struct iovec *iov, struct iface_rec *iface,
+-				 uint32_t iface_type)
++/* disable/enable parameters */
++static int iface_fill_param_state(struct iovec *iov, uint32_t iface_num,
++				  uint8_t iface_type, uint16_t param,
++				  uint8_t param_type, char *param_val)
+ {
+ 	int len;
+ 	struct iscsi_iface_param_info *net_param;
+ 	struct nlattr *attr;
+ 
+-	len = sizeof(struct iscsi_iface_param_info) + 1;
+-	iov->iov_base = iscsi_nla_alloc(ISCSI_NET_PARAM_VLAN_ENABLED, len);
+-	if (!(iov->iov_base))
++	if (!param_val[0])
+ 		return 1;
+ 
+-	attr = iov->iov_base;
+-	iov->iov_len = NLA_ALIGN(attr->nla_len);
+-	net_param = (struct iscsi_iface_param_info *)ISCSI_NLA_DATA(attr);
+-	net_param->param = ISCSI_NET_PARAM_VLAN_ENABLED;
+-	net_param->iface_type = iface_type;
+-	net_param->iface_num = iface->iface_num;
+-	net_param->param_type = ISCSI_NET_PARAM;
+-	net_param->len = 1;
+-	if (strcmp(iface->vlan_state, "disable") && iface->vlan_id)
+-		net_param->value[0] = ISCSI_VLAN_ENABLE;
+-	else /* Assume disabled */
+-		net_param->value[0] = ISCSI_VLAN_DISABLE;
+-	return 0;
+-}
+-
+-/* IPv4/IPv6 Network state: disable/enable */
+-static int iface_fill_net_state(struct iovec *iov, struct iface_rec *iface,
+-				uint32_t iface_type)
+-{
+-	int len;
+-	struct iscsi_iface_param_info *net_param;
+-	struct nlattr *attr;
+-
+ 	len = sizeof(struct iscsi_iface_param_info) + 1;
+-	iov->iov_base = iscsi_nla_alloc(ISCSI_NET_PARAM_IFACE_ENABLE, len);
++	iov->iov_base = iscsi_nla_alloc(param, len);
+ 	if (!(iov->iov_base))
+ 		return 1;
+ 
+ 	attr = iov->iov_base;
+ 	iov->iov_len = NLA_ALIGN(attr->nla_len);
+ 	net_param = (struct iscsi_iface_param_info *)ISCSI_NLA_DATA(attr);
+-	net_param->param = ISCSI_NET_PARAM_IFACE_ENABLE;
+-	net_param->iface_type = iface_type;
+-	net_param->iface_num = iface->iface_num;
+-	net_param->param_type = ISCSI_NET_PARAM;
++	net_param->iface_num = iface_num;
+ 	net_param->len = 1;
+-	if (!strcmp(iface->state, "disable"))
+-		net_param->value[0] = ISCSI_IFACE_DISABLE;
+-	else /* Assume enabled */
+-		net_param->value[0] = ISCSI_IFACE_ENABLE;
++	net_param->param = param;
++	net_param->iface_type = iface_type;
++	net_param->param_type = param_type;
++	if (!strcmp(param_val, "disable"))
++		net_param->value[0] = ISCSI_NET_PARAM_DISABLE;
++	else if (!strcmp(param_val, "enable"))
++		net_param->value[0] = ISCSI_NET_PARAM_ENABLE;
++	else
++		goto free;
+ 	return 0;
++free:
++	free(iov->iov_base);
++	iov->iov_base = NULL;
++	iov->iov_len = 0;
++	return 1;
++}
++
++#define IFACE_SET_PARAM_STATE(iov, inum, itype, param, ptype, ival,	\
++			      gcnt, lcnt) {				\
++	if (!iface_fill_param_state(iov, inum, itype, param, ptype,	\
++				    ival)) {				\
++		(*gcnt)++;						\
++		(*lcnt)++;						\
++	}								\
+ }
+ 
+ /* IPv4 Bootproto: DHCP/static */
+@@ -1478,8 +1702,8 @@ static int iface_fill_router_autocfg(struct iovec *iov, struct iface_rec *iface)
+ }
+ 
+ /* IPv4 IPAddress/Subnet Mask/Gateway: 4 bytes */
+-static int iface_fill_net_ipv4_addr(struct iovec *iov, struct iface_rec *iface,
+-				    uint32_t param)
++static int iface_fill_net_ipv4_addr(struct iovec *iov, uint32_t iface_num,
++				    uint16_t param, char *param_val)
+ {
+ 	int rc = 1;
+ 	int len;
+@@ -1496,29 +1720,12 @@ static int iface_fill_net_ipv4_addr(struct iovec *iov, struct iface_rec *iface,
+ 	net_param = (struct iscsi_iface_param_info *)ISCSI_NLA_DATA(attr);
+ 	net_param->param = param;
+ 	net_param->iface_type = ISCSI_IFACE_TYPE_IPV4;
+-	net_param->iface_num = iface->iface_num;
++	net_param->iface_num = iface_num;
+ 	net_param->len = 4;
+ 	net_param->param_type = ISCSI_NET_PARAM;
+-
+-	switch (param) {
+-	case ISCSI_NET_PARAM_IPV4_ADDR:
+-		rc = inet_pton(AF_INET, iface->ipaddress, net_param->value);
+-		if (rc <= 0)
+-			goto free;
+-		break;
+-	case ISCSI_NET_PARAM_IPV4_SUBNET:
+-		rc = inet_pton(AF_INET, iface->subnet_mask, net_param->value);
+-		if (rc <= 0)
+-			goto free;
+-		break;
+-	case ISCSI_NET_PARAM_IPV4_GW:
+-		rc = inet_pton(AF_INET, iface->gateway, net_param->value);
+-		if (rc <= 0)
+-			goto free;
+-		break;
+-	default:
++	rc = inet_pton(AF_INET, param_val, net_param->value);
++	if (rc <= 0)
+ 		goto free;
+-	}
+ 
+ 	/* validate */
+ 	if (!net_param->value[0] && !net_param->value[1] &&
+@@ -1533,9 +1740,19 @@ free:
+ 	return 1;
+ }
+ 
++#define IFACE_SET_NET_PARAM_IPV4_ADDR(iov, inum, param, ival, gcnt,	\
++				      lcnt) {				\
++	if (strstr(ival, ".")) {					\
++		if (!iface_fill_net_ipv4_addr(iov, inum, param, ival)) {\
++			(*gcnt)++;					\
++			(*lcnt)++;					\
++		}							\
++	}								\
++}
++
+ /* IPv6 IPAddress/LinkLocal/Router: 16 bytes */
+-static int iface_fill_net_ipv6_addr(struct iovec *iov, struct iface_rec *iface,
+-				    uint32_t param)
++static int iface_fill_net_ipv6_addr(struct iovec *iov, uint32_t iface_num,
++				    uint16_t param, char *param_val)
+ {
+ 	int rc;
+ 	int len;
+@@ -1552,30 +1769,12 @@ static int iface_fill_net_ipv6_addr(struct iovec *iov, struct iface_rec *iface,
+ 	net_param = (struct iscsi_iface_param_info *)ISCSI_NLA_DATA(attr);
+ 	net_param->param = param;
+ 	net_param->iface_type = ISCSI_IFACE_TYPE_IPV6;
+-	net_param->iface_num = iface->iface_num;
++	net_param->iface_num = iface_num;
+ 	net_param->param_type = ISCSI_NET_PARAM;
+ 	net_param->len = 16;
+-
+-	switch (param) {
+-	case ISCSI_NET_PARAM_IPV6_ADDR:
+-		rc = inet_pton(AF_INET6, iface->ipaddress, net_param->value);
+-		if (rc <= 0)
+-			goto free;
+-		break;
+-	case ISCSI_NET_PARAM_IPV6_LINKLOCAL:
+-		rc = inet_pton(AF_INET6, iface->ipv6_linklocal,
+-			       net_param->value);
+-		if (rc <= 0)
+-			goto free;
+-		break;
+-	case ISCSI_NET_PARAM_IPV6_ROUTER:
+-		rc = inet_pton(AF_INET6, iface->ipv6_router, net_param->value);
+-		if (rc <= 0)
+-			goto free;
+-		break;
+-	default:
++	rc = inet_pton(AF_INET6, param_val, net_param->value);
++	if (rc <= 0)
+ 		goto free;
+-	}
+ 
+ 	return 0;
+ free:
+@@ -1585,6 +1784,54 @@ free:
+ 	return 1;
+ }
+ 
++#define IFACE_SET_NET_PARAM_IPV6_ADDR(iov, inum, param, ival, gcnt,	\
++				      lcnt) {				\
++	if (strstr(ival, ":")) {					\
++		if (!iface_fill_net_ipv6_addr(iov, inum, param, ival)) {\
++			(*gcnt)++;					\
++			(*lcnt)++;					\
++		}							\
++	}								\
++}
++
++/* write string parameter value */
++static int iface_fill_str_param_val(struct iovec *iov, uint32_t iface_num,
++				    uint8_t iface_type, uint16_t param,
++				    uint32_t param_len, char *param_val)
++{
++	int len;
++	struct iscsi_iface_param_info *net_param;
++	struct nlattr *attr;
++
++	if (!param_val[0])
++		return 1;
++
++	len = sizeof(struct iscsi_iface_param_info) + param_len;
++	iov->iov_base = iscsi_nla_alloc(param, len);
++	if (!(iov->iov_base))
++		return 1;
++
++	attr = iov->iov_base;
++	iov->iov_len = NLA_ALIGN(attr->nla_len);
++	net_param = (struct iscsi_iface_param_info *)ISCSI_NLA_DATA(attr);
++	net_param->iface_num = iface_num;
++	net_param->len = param_len;
++	net_param->param = param;
++	net_param->iface_type = iface_type;
++	net_param->param_type = ISCSI_NET_PARAM;
++	memcpy(net_param->value, param_val, param_len);
++	return 0;
++}
++
++#define IFACE_SET_NET_PARAM_STRVAL(iov, inum, itype, param, plen,	\
++				   ival, gcnt, lcnt) {			\
++	if (!iface_fill_str_param_val(iov, inum, itype, param, plen,	\
++				      ival)) {				\
++		(*gcnt)++;						\
++		(*lcnt)++;						\
++	}								\
++}
++
+ struct iface_net_config {
+ 	struct iface_rec *primary;
+ 	struct iovec *iovs;
+@@ -1604,16 +1851,21 @@ static int __iface_build_net_config(void *data, struct iface_rec *iface)
+ 	/* start at 2, because 0 is for nlmsghdr and 1 for event */
+ 	iov = net_config->iovs + 2;
+ 
++	if (!iface->port)
++		iface->port = 3260;
++
+ 	iptype = iface_get_iptype(iface);
+-	if (iptype == ISCSI_IFACE_TYPE_IPV4) {
++	switch (iptype) {
++	case ISCSI_IFACE_TYPE_IPV4:
+ 		if (!strcmp(iface->state, "disable")) {
+-			if (!iface_fill_net_state(&iov[net_config->count],
+-						  iface,
+-						  ISCSI_IFACE_TYPE_IPV4)) {
+-				net_config->count++;
+-				count++;
+-			}
+-
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++					      iface->iface_num,
++					      ISCSI_IFACE_TYPE_IPV4,
++					      ISCSI_NET_PARAM_IFACE_ENABLE,
++					      ISCSI_NET_PARAM,
++					      iface->state,
++					      &net_config->count,
++					      &count);
+ 			return 0;
+ 		}
+ 
+@@ -1629,28 +1881,27 @@ static int __iface_build_net_config(void *data, struct iface_rec *iface)
+ 				net_config->count++;
+ 				count++;
+ 			}
+-			if (!iface_fill_net_ipv4_addr(&iov[net_config->count],
+-						iface,
+-						ISCSI_NET_PARAM_IPV4_ADDR)) {
+-				net_config->count++;
+-				count++;
+-			}
+-			if (strstr(iface->subnet_mask, ".")) {
+-				if (!iface_fill_net_ipv4_addr(
+-						&iov[net_config->count], iface,
+-						ISCSI_NET_PARAM_IPV4_SUBNET)) {
+-					net_config->count++;
+-					count++;
+-				}
+-			}
+-			if (strstr(iface->gateway, ".")) {
+-				if (!iface_fill_net_ipv4_addr(
+-						&iov[net_config->count], iface,
+-						ISCSI_NET_PARAM_IPV4_GW)) {
+-					net_config->count++;
+-					count++;
+-				}
+-			}
++
++			IFACE_SET_NET_PARAM_IPV4_ADDR(&iov[net_config->count],
++						      iface->iface_num,
++						      ISCSI_NET_PARAM_IPV4_ADDR,
++						      iface->ipaddress,
++						      &net_config->count,
++						      &count);
++
++			IFACE_SET_NET_PARAM_IPV4_ADDR(&iov[net_config->count],
++						    iface->iface_num,
++						    ISCSI_NET_PARAM_IPV4_SUBNET,
++						    iface->subnet_mask,
++						    &net_config->count,
++						    &count);
++
++			IFACE_SET_NET_PARAM_IPV4_ADDR(&iov[net_config->count],
++						      iface->iface_num,
++						      ISCSI_NET_PARAM_IPV4_GW,
++						      iface->gateway,
++						      &net_config->count,
++						      &count);
+ 		}
+ 
+ 		/*
+@@ -1658,51 +1909,146 @@ static int __iface_build_net_config(void *data, struct iface_rec *iface)
+ 		 * fill state and other parameters (if any)
+ 		 */
+ 		if (count) {
+-			if (!iface_fill_net_state(&iov[net_config->count],
+-						  iface,
+-						  ISCSI_IFACE_TYPE_IPV4)) {
+-				net_config->count++;
+-				count++;
+-			}
+-			if (!iface_fill_vlan_state(&iov[net_config->count],
+-						iface,
+-						ISCSI_IFACE_TYPE_IPV4)) {
+-				net_config->count++;
+-				count++;
+-			}
+-			if (strcmp(iface->vlan_state, "disable") &&
+-			    iface->vlan_id) {
+-				if (!iface_fill_vlan_id(&iov[net_config->count],
+-						iface, ISCSI_IFACE_TYPE_IPV4)) {
+-					net_config->count++;
+-					count++;
+-				}
+-			}
+-			if (iface->mtu) {
+-				if (!iface_fill_mtu(&iov[net_config->count],
+-						    iface,
+-						    ISCSI_IFACE_TYPE_IPV4)) {
+-					net_config->count++;
+-					count++;
+-				}
+-			}
+-			if (iface->port) {
+-				if (!iface_fill_port(&iov[net_config->count],
+-						iface,
+-						ISCSI_IFACE_TYPE_IPV4)) {
+-					net_config->count++;
+-					count++;
+-				}
+-			}
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++					  iface->iface_num,
++					  ISCSI_IFACE_TYPE_IPV4,
++					  ISCSI_NET_PARAM_IPV4_DHCP_DNS_ADDR_EN,
++					  ISCSI_NET_PARAM,
++					  iface->dhcp_dns,
++					  &net_config->count,
++					  &count);
++
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++					    iface->iface_num,
++					    ISCSI_IFACE_TYPE_IPV4,
++					    ISCSI_NET_PARAM_IPV4_DHCP_SLP_DA_EN,
++					    ISCSI_NET_PARAM,
++					    iface->dhcp_slp_da,
++					    &net_config->count,
++					    &count);
++
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++					      iface->iface_num,
++					      ISCSI_IFACE_TYPE_IPV4,
++					      ISCSI_NET_PARAM_IPV4_TOS_EN,
++					      ISCSI_NET_PARAM,
++					      iface->tos_state,
++					      &net_config->count,
++					      &count);
++
++			IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++					      iface->iface_num,
++					      ISCSI_IFACE_TYPE_IPV4,
++					      ISCSI_NET_PARAM_IPV4_TOS,
++					      ISCSI_NET_PARAM,
++					      1,
++					      iface->tos,
++					      &net_config->count,
++					      &count);
++
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++					      iface->iface_num,
++					      ISCSI_IFACE_TYPE_IPV4,
++					      ISCSI_NET_PARAM_IPV4_GRAT_ARP_EN,
++					      ISCSI_NET_PARAM,
++					      iface->gratuitous_arp,
++					      &net_config->count,
++					      &count);
++
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				     iface->iface_num,
++				     ISCSI_IFACE_TYPE_IPV4,
++				     ISCSI_NET_PARAM_IPV4_DHCP_ALT_CLIENT_ID_EN,
++				     ISCSI_NET_PARAM,
++				     iface->dhcp_alt_client_id_state,
++				     &net_config->count,
++				     &count);
++
++			IFACE_SET_NET_PARAM_STRVAL(&iov[net_config->count],
++					iface->iface_num,
++					ISCSI_IFACE_TYPE_IPV4,
++					ISCSI_NET_PARAM_IPV4_DHCP_ALT_CLIENT_ID,
++					 strlen(iface->dhcp_alt_client_id),
++					iface->dhcp_alt_client_id,
++					&net_config->count,
++					&count);
++
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				     iface->iface_num,
++				     ISCSI_IFACE_TYPE_IPV4,
++				     ISCSI_NET_PARAM_IPV4_DHCP_REQ_VENDOR_ID_EN,
++				     ISCSI_NET_PARAM,
++				     iface->dhcp_req_vendor_id_state,
++				     &net_config->count,
++				     &count);
++
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				     iface->iface_num,
++				     ISCSI_IFACE_TYPE_IPV4,
++				     ISCSI_NET_PARAM_IPV4_DHCP_USE_VENDOR_ID_EN,
++				     ISCSI_NET_PARAM,
++				     iface->dhcp_vendor_id_state,
++				     &net_config->count,
++				     &count);
++
++			IFACE_SET_NET_PARAM_STRVAL(&iov[net_config->count],
++					iface->iface_num,
++					ISCSI_IFACE_TYPE_IPV4,
++					ISCSI_NET_PARAM_IPV4_DHCP_VENDOR_ID,
++					strlen(iface->dhcp_vendor_id),
++					iface->dhcp_vendor_id,
++					&net_config->count,
++					&count);
++
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++					 iface->iface_num,
++					 ISCSI_IFACE_TYPE_IPV4,
++					 ISCSI_NET_PARAM_IPV4_DHCP_LEARN_IQN_EN,
++					 ISCSI_NET_PARAM,
++					 iface->dhcp_learn_iqn,
++					 &net_config->count,
++					 &count);
++
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++					  iface->iface_num,
++					  ISCSI_IFACE_TYPE_IPV4,
++					  ISCSI_NET_PARAM_IPV4_FRAGMENT_DISABLE,
++					  ISCSI_NET_PARAM,
++					  iface->fragmentation,
++					  &net_config->count,
++					  &count);
++
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++					     iface->iface_num,
++					     ISCSI_IFACE_TYPE_IPV4,
++					     ISCSI_NET_PARAM_IPV4_IN_FORWARD_EN,
++					     ISCSI_NET_PARAM,
++					     iface->incoming_forwarding,
++					     &net_config->count,
++					     &count);
++
++			IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++					       iface->iface_num,
++					       ISCSI_IFACE_TYPE_IPV4,
++					       ISCSI_NET_PARAM_IPV4_TTL,
++					       ISCSI_NET_PARAM,
++					       1,
++					       iface->ttl,
++					       &net_config->count,
++					       &count);
+ 		}
+-	} else if (iptype == ISCSI_IFACE_TYPE_IPV6) {
++		break;
++
++	case ISCSI_IFACE_TYPE_IPV6:
+ 		if (!strcmp(iface->state, "disable")) {
+-			if (!iface_fill_net_state(&iov[net_config->count],
+-						  iface,
+-						  ISCSI_IFACE_TYPE_IPV6)) {
+-				net_config->count++;
+-				count++;
+-			}
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++					      iface->iface_num,
++					      ISCSI_IFACE_TYPE_IPV6,
++					      ISCSI_NET_PARAM_IFACE_ENABLE,
++					      ISCSI_NET_PARAM,
++					      iface->state,
++					      &net_config->count,
++					      &count);
+ 			return 0;
+ 		}
+ 
+@@ -1721,12 +2067,12 @@ static int __iface_build_net_config(void *data, struct iface_rec *iface)
+ 				count++;
+ 			}
+ 			/* User provided IPv6 Address */
+-			if (!iface_fill_net_ipv6_addr(&iov[net_config->count],
+-						iface,
+-						ISCSI_NET_PARAM_IPV6_ADDR)) {
+-				net_config->count++;
+-				count++;
+-			}
++			IFACE_SET_NET_PARAM_IPV6_ADDR(&iov[net_config->count],
++						      iface->iface_num,
++						      ISCSI_NET_PARAM_IPV6_ADDR,
++						      iface->ipaddress,
++						      &net_config->count,
++						      &count);
+ 		}
+ 
+ 		/* For LinkLocal Address */
+@@ -1745,12 +2091,12 @@ static int __iface_build_net_config(void *data, struct iface_rec *iface)
+ 				count++;
+ 			}
+ 			/* User provided Link Local Address */
+-			if (!iface_fill_net_ipv6_addr(&iov[net_config->count],
+-					iface,
+-					ISCSI_NET_PARAM_IPV6_LINKLOCAL)) {
+-				net_config->count++;
+-				count++;
+-			}
++			IFACE_SET_NET_PARAM_IPV6_ADDR(&iov[net_config->count],
++						 iface->iface_num,
++						 ISCSI_NET_PARAM_IPV6_LINKLOCAL,
++						 iface->ipv6_linklocal,
++						 &net_config->count,
++						 &count);
+ 		}
+ 
+ 		/* For Router Address */
+@@ -1767,12 +2113,12 @@ static int __iface_build_net_config(void *data, struct iface_rec *iface)
+ 				count++;
+ 			}
+ 			/* User provided Router Address */
+-			if (!iface_fill_net_ipv6_addr(&iov[net_config->count],
+-						iface,
+-						ISCSI_NET_PARAM_IPV6_ROUTER)) {
+-				net_config->count++;
+-				count++;
+-			}
++			IFACE_SET_NET_PARAM_IPV6_ADDR(&iov[net_config->count],
++						    iface->iface_num,
++						    ISCSI_NET_PARAM_IPV6_ROUTER,
++						    iface->ipv6_router,
++						    &net_config->count,
++						    &count);
+ 		}
+ 
+ 		/*
+@@ -1780,44 +2126,378 @@ static int __iface_build_net_config(void *data, struct iface_rec *iface)
+ 		 * fill state and other parameters
+ 		 */
+ 		if (count) {
+-			if (!iface_fill_net_state(&iov[net_config->count],
+-						  iface,
+-						  ISCSI_IFACE_TYPE_IPV6)) {
+-				net_config->count++;
+-				count++;
+-			}
+-			if (!iface_fill_vlan_state(&iov[net_config->count],
+-						   iface,
+-						   ISCSI_IFACE_TYPE_IPV6)) {
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      ISCSI_IFACE_TYPE_IPV6,
++				      ISCSI_NET_PARAM_IPV6_GRAT_NEIGHBOR_ADV_EN,
++				      ISCSI_NET_PARAM,
++				      iface->gratuitous_neighbor_adv,
++				      &net_config->count,
++				      &count);
++
++			IFACE_SET_PARAM_STATE(&iov[net_config->count],
++					      iface->iface_num,
++					      ISCSI_IFACE_TYPE_IPV6,
++					      ISCSI_NET_PARAM_IPV6_MLD_EN,
++					      ISCSI_NET_PARAM,
++					      iface->mld,
++					      &net_config->count,
++					      &count);
++
++			IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++					       iface->iface_num,
++					       ISCSI_IFACE_TYPE_IPV6,
++					       ISCSI_NET_PARAM_IPV6_FLOW_LABEL,
++					       ISCSI_NET_PARAM,
++					       4,
++					       iface->flow_label,
++					       &net_config->count,
++					       &count);
++
++			IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++					     iface->iface_num,
++					     ISCSI_IFACE_TYPE_IPV6,
++					     ISCSI_NET_PARAM_IPV6_TRAFFIC_CLASS,
++					     ISCSI_NET_PARAM,
++					     1,
++					     iface->traffic_class,
++					     &net_config->count,
++					     &count);
++
++			IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++					       iface->iface_num,
++					       ISCSI_IFACE_TYPE_IPV6,
++					       ISCSI_NET_PARAM_IPV6_HOP_LIMIT,
++					       ISCSI_NET_PARAM,
++					       1,
++					       iface->hop_limit,
++					       &net_config->count,
++					       &count);
++
++			IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++					  iface->iface_num,
++					  ISCSI_IFACE_TYPE_IPV6,
++					  ISCSI_NET_PARAM_IPV6_ND_REACHABLE_TMO,
++					  ISCSI_NET_PARAM,
++					  4,
++					  iface->nd_reachable_tmo,
++					  &net_config->count,
++					  &count);
++
++			IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++					    iface->iface_num,
++					    ISCSI_IFACE_TYPE_IPV6,
++					    ISCSI_NET_PARAM_IPV6_ND_REXMIT_TIME,
++					    ISCSI_NET_PARAM,
++					    4,
++					    iface->nd_rexmit_time,
++					    &net_config->count,
++					    &count);
++
++			IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++					      iface->iface_num,
++					      ISCSI_IFACE_TYPE_IPV6,
++					      ISCSI_NET_PARAM_IPV6_ND_STALE_TMO,
++					      ISCSI_NET_PARAM,
++					      4,
++					      iface->nd_stale_tmo,
++					      &net_config->count,
++					      &count);
++
++			IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++				       iface->iface_num,
++				       ISCSI_IFACE_TYPE_IPV6,
++				       ISCSI_NET_PARAM_IPV6_DUP_ADDR_DETECT_CNT,
++				       ISCSI_NET_PARAM,
++				       1,
++				       iface->dup_addr_detect_cnt,
++				       &net_config->count,
++				       &count);
++
++			IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++					  iface->iface_num,
++					  ISCSI_IFACE_TYPE_IPV6,
++					  ISCSI_NET_PARAM_IPV6_RTR_ADV_LINK_MTU,
++					  ISCSI_NET_PARAM,
++					  4,
++					  iface->router_adv_link_mtu,
++					  &net_config->count,
++					  &count);
++		}
++		break;
++	}
++
++	/* Fill parameters common to IPv4 and IPv6 ifaces */
++	if (count) {
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_NET_PARAM_IFACE_ENABLE,
++				      ISCSI_NET_PARAM,
++				      iface->state,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_NET_PARAM_VLAN_ENABLED,
++				      ISCSI_NET_PARAM,
++				      iface->vlan_state,
++				      &net_config->count,
++				      &count);
++
++		if (strcmp(iface->vlan_state, "disable") && iface->vlan_id) {
++			if (!iface_fill_vlan_id(&iov[net_config->count], iface,
++						iptype)) {
+ 				net_config->count++;
+ 				count++;
+ 			}
+-			if (strcmp(iface->vlan_state, "disable") &&
+-			    iface->vlan_id) {
+-				if (!iface_fill_vlan_id(&iov[net_config->count],
+-						iface,
+-						ISCSI_IFACE_TYPE_IPV6)) {
+-					net_config->count++;
+-					count++;
+-				}
+-			}
+-			if (iface->mtu) {
+-				if (!iface_fill_mtu(&iov[net_config->count],
+-						    iface,
+-						    ISCSI_IFACE_TYPE_IPV6)) {
+-					net_config->count++;
+-					count++;
+-				}
+-			}
+-			if (iface->port) {
+-				if (!iface_fill_port(&iov[net_config->count],
+-						     iface,
+-						     ISCSI_IFACE_TYPE_IPV6)) {
+-					net_config->count++;
+-					count++;
+-				}
+-			}
+ 		}
++
++		IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++				       iface->iface_num,
++				       iptype,
++				       ISCSI_NET_PARAM_MTU,
++				       ISCSI_NET_PARAM,
++				       2,
++				       iface->mtu,
++				       &net_config->count,
++				       &count);
++
++		IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++				       iface->iface_num,
++				       iptype,
++				       ISCSI_NET_PARAM_PORT,
++				       ISCSI_NET_PARAM,
++				       2,
++				       iface->port,
++				       &net_config->count,
++				       &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_NET_PARAM_DELAYED_ACK_EN,
++				      ISCSI_NET_PARAM,
++				      iface->delayed_ack,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_NET_PARAM_TCP_NAGLE_DISABLE,
++				      ISCSI_NET_PARAM,
++				      iface->nagle,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_NET_PARAM_TCP_WSF_DISABLE,
++				      ISCSI_NET_PARAM,
++				      iface->tcp_wsf_state,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++				       iface->iface_num,
++				       iptype,
++				       ISCSI_NET_PARAM_TCP_WSF,
++				       ISCSI_NET_PARAM,
++				       1,
++				       iface->tcp_wsf,
++				       &net_config->count,
++				       &count);
++
++		IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++				       iface->iface_num,
++				       iptype,
++				       ISCSI_NET_PARAM_TCP_TIMER_SCALE,
++				       ISCSI_NET_PARAM,
++				       1,
++				       iface->tcp_timer_scale,
++				       &net_config->count,
++				       &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_NET_PARAM_TCP_TIMESTAMP_EN,
++				      ISCSI_NET_PARAM,
++				      iface->tcp_timestamp,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_NET_PARAM_REDIRECT_EN,
++				      ISCSI_NET_PARAM,
++				      iface->redirect,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++				     iface->iface_num,
++				     iptype,
++				     ISCSI_IFACE_PARAM_DEF_TASKMGMT_TMO,
++				     ISCSI_IFACE_PARAM,
++				     2,
++				     iface->def_task_mgmt_tmo,
++				     &net_config->count,
++				     &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_IFACE_PARAM_HDRDGST_EN,
++				      ISCSI_IFACE_PARAM,
++				      iface->header_digest,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_IFACE_PARAM_DATADGST_EN,
++				      ISCSI_IFACE_PARAM,
++				      iface->data_digest,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_IFACE_PARAM_IMM_DATA_EN,
++				      ISCSI_IFACE_PARAM,
++				      iface->immediate_data,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_IFACE_PARAM_INITIAL_R2T_EN,
++				      ISCSI_IFACE_PARAM,
++				      iface->initial_r2t,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_IFACE_PARAM_DATASEQ_INORDER_EN,
++				      ISCSI_IFACE_PARAM,
++				      iface->data_seq_inorder,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_IFACE_PARAM_PDU_INORDER_EN,
++				      ISCSI_IFACE_PARAM,
++				      iface->data_pdu_inorder,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++				       iface->iface_num,
++				       iptype,
++				       ISCSI_IFACE_PARAM_ERL,
++				       ISCSI_IFACE_PARAM,
++				       1,
++				       iface->erl,
++				       &net_config->count,
++				       &count);
++
++		IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++				       iface->iface_num,
++				       iptype,
++				       ISCSI_IFACE_PARAM_MAX_RECV_DLENGTH,
++				       ISCSI_IFACE_PARAM,
++				       4,
++				       iface->max_recv_dlength,
++				       &net_config->count,
++				       &count);
++
++		IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++				       iface->iface_num,
++				       iptype,
++				       ISCSI_IFACE_PARAM_FIRST_BURST,
++				       ISCSI_IFACE_PARAM,
++				       4,
++				       iface->first_burst_len,
++				       &net_config->count,
++				       &count);
++
++		IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++				       iface->iface_num,
++				       iptype,
++				       ISCSI_IFACE_PARAM_MAX_R2T,
++				       ISCSI_IFACE_PARAM,
++				       2,
++				       iface->max_out_r2t,
++				       &net_config->count,
++				       &count);
++
++		IFACE_SET_PARAM_INTVAL(&iov[net_config->count],
++				       iface->iface_num,
++				       iptype,
++				       ISCSI_IFACE_PARAM_MAX_BURST,
++				       ISCSI_IFACE_PARAM,
++				       4,
++				       iface->max_burst_len,
++				       &net_config->count,
++				       &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_IFACE_PARAM_CHAP_AUTH_EN,
++				      ISCSI_IFACE_PARAM,
++				      iface->chap_auth,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_IFACE_PARAM_BIDI_CHAP_EN,
++				      ISCSI_IFACE_PARAM,
++				      iface->bidi_chap,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_IFACE_PARAM_STRICT_LOGIN_COMP_EN,
++				      ISCSI_IFACE_PARAM,
++				      iface->strict_login_comp,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_IFACE_PARAM_DISCOVERY_AUTH_OPTIONAL,
++				      ISCSI_IFACE_PARAM,
++				      iface->discovery_auth,
++				      &net_config->count,
++				      &count);
++
++		IFACE_SET_PARAM_STATE(&iov[net_config->count],
++				      iface->iface_num,
++				      iptype,
++				      ISCSI_IFACE_PARAM_DISCOVERY_LOGOUT_EN,
++				      ISCSI_IFACE_PARAM,
++				      iface->discovery_logout,
++				      &net_config->count,
++				      &count);
+ 	}
+ 	return 0;
+ }
+diff --git a/usr/initiator.c b/usr/initiator.c
+index a3b24b7..79d1779 100644
+--- a/usr/initiator.c
++++ b/usr/initiator.c
+@@ -384,17 +384,7 @@ __session_create(node_rec_t *rec, struct iscsi_transport *t)
+ 	/* setup authentication variables for the session*/
+ 	iscsi_setup_authentication(session, &rec->session.auth);
+ 
+-	session->param_mask = ~0ULL;
+-	if (!(t->caps & CAP_MULTI_R2T))
+-		session->param_mask &= ~ISCSI_MAX_R2T;
+-	if (!(t->caps & CAP_HDRDGST))
+-		session->param_mask &= ~ISCSI_HDRDGST_EN;
+-	if (!(t->caps & CAP_DATADGST))
+-		session->param_mask &= ~ISCSI_DATADGST_EN;
+-	if (!(t->caps & CAP_MARKERS)) {
+-		session->param_mask &= ~ISCSI_IFMARKER_EN;
+-		session->param_mask &= ~ISCSI_OFMARKER_EN;
+-	}
++	iscsi_session_init_params(session);
+ 
+ 	hostno = iscsi_sysfs_get_host_no_from_hwinfo(&rec->iface, &rc);
+ 	if (!rc) {
+diff --git a/usr/initiator.h b/usr/initiator.h
+index d6dc02e..680640c 100644
+--- a/usr/initiator.h
++++ b/usr/initiator.h
+@@ -357,5 +357,6 @@ extern int iscsi_setup_portal(struct iscsi_conn *conn, char *address, int port);
+ extern int iscsi_set_net_config(struct iscsi_transport *t,
+ 				iscsi_session_t *session,
+ 				struct iface_rec *iface);
++extern void iscsi_session_init_params(struct iscsi_session *session);
+ 
+ #endif /* INITIATOR_H */
+diff --git a/usr/initiator_common.c b/usr/initiator_common.c
+index 3368b88..3053812 100644
+--- a/usr/initiator_common.c
++++ b/usr/initiator_common.c
+@@ -324,12 +324,32 @@ int iscsi_host_set_params(struct iscsi_session *session)
+ 	return 0;
+ }
+ 
++static inline void iscsi_session_clear_param(struct iscsi_session *session,
++					     int param)
++{
++	session->param_mask &= ~(1ULL << param);
++}
++
++void iscsi_session_init_params(struct iscsi_session *session)
++{
++	session->param_mask = ~0ULL;
++	if (!(session->t->caps & CAP_MULTI_R2T))
++		iscsi_session_clear_param(session, ISCSI_PARAM_MAX_R2T);
++	if (!(session->t->caps & CAP_HDRDGST))
++		iscsi_session_clear_param(session, ISCSI_PARAM_HDRDGST_EN); 
++	if (!(session->t->caps & CAP_DATADGST))
++		iscsi_session_clear_param(session, ISCSI_PARAM_DATADGST_EN); 
++	if (!(session->t->caps & CAP_MARKERS)) {
++		iscsi_session_clear_param(session, ISCSI_PARAM_IFMARKER_EN);
++		iscsi_session_clear_param(session, ISCSI_PARAM_OFMARKER_EN);
++	}
++}
++
+ #define MAX_SESSION_PARAMS 35
+ 
+ int iscsi_session_set_params(struct iscsi_conn *conn)
+ {
+ 	struct iscsi_session *session = conn->session;
+-	struct iscsi_transport *t = session->t;
+ 	int i, rc;
+ 	uint32_t one = 1, zero = 0;
+ 	struct connparam {
+@@ -511,22 +531,12 @@ int iscsi_session_set_params(struct iscsi_conn *conn)
+ 		},
+ 	};
+ 
+-	session->param_mask = ~0ULL;
+-	if (!(t->caps & CAP_MULTI_R2T))
+-		session->param_mask &= ~ISCSI_MAX_R2T;
+-	if (!(t->caps & CAP_HDRDGST))
+-		session->param_mask &= ~ISCSI_HDRDGST_EN;
+-	if (!(t->caps & CAP_DATADGST))
+-		session->param_mask &= ~ISCSI_DATADGST_EN;
+-	if (!(t->caps & CAP_MARKERS)) {
+-		session->param_mask &= ~ISCSI_IFMARKER_EN;
+-		session->param_mask &= ~ISCSI_OFMARKER_EN;
+-	}
++	iscsi_session_init_params(session);
+ 
+ 	/* some llds will send nops internally */
+ 	if (!iscsi_sysfs_session_supports_nop(session->id)) {
+-		session->param_mask &= ~ISCSI_PING_TMO;
+-		session->param_mask &= ~ISCSI_RECV_TMO;
++		iscsi_session_clear_param(session, ISCSI_PARAM_PING_TMO); 
++		iscsi_session_clear_param(session, ISCSI_PARAM_RECV_TMO);
+ 	}
+ 
+ 	/* Entered full-feature phase! */
+diff --git a/usr/iscsi_ipc.h b/usr/iscsi_ipc.h
+index 3e7f82a..d23754d 100644
+--- a/usr/iscsi_ipc.h
++++ b/usr/iscsi_ipc.h
+@@ -143,6 +143,9 @@ struct iscsi_ipc {
+ 			 uint16_t chap_tbl_idx, uint32_t num_entries,
+ 			 char *chap_buf, uint32_t *valid_chap_entries);
+ 
++	int (*set_chap) (uint64_t transport_handle, uint32_t host_no,
++			 struct iovec *iovs, uint32_t param_count);
++
+ 	int (*delete_chap) (uint64_t transport_handle, uint32_t host_no,
+ 			    uint16_t chap_tbl_idx);
+ 	int (*set_flash_node_params) (uint64_t transport_handle,
+@@ -158,6 +161,8 @@ struct iscsi_ipc {
+ 				  uint32_t flashnode_idx);
+ 	int (*logout_flash_node_sid) (uint64_t transport_handle,
+ 				      uint32_t host_no, uint32_t sid);
++	int (*get_host_stats) (uint64_t transport_handle, uint32_t host_no,
++			 char *host_stats);
+ };
+ 
+ struct iscsi_ipc *ipc;
+diff --git a/usr/iscsi_sysfs.c b/usr/iscsi_sysfs.c
+index 3b8f9ea..261329d 100644
+--- a/usr/iscsi_sysfs.c
++++ b/usr/iscsi_sysfs.c
+@@ -638,12 +638,12 @@ int iscsi_sysfs_get_flashnode_info(struct flashnode_rec *fnode,
+ 	sysfs_get_str(sess_id, ISCSI_FLASHNODE_SUBSYS, "username",
+ 		      (fnode->sess).username, sizeof((fnode->sess).username));
+ 	sysfs_get_str(sess_id, ISCSI_FLASHNODE_SUBSYS, "username_in",
+-		      (fnode->sess).username,
++		      (fnode->sess).username_in,
+ 		      sizeof((fnode->sess).username_in));
+ 	sysfs_get_str(sess_id, ISCSI_FLASHNODE_SUBSYS, "password",
+ 		      (fnode->sess).password, sizeof((fnode->sess).password));
+ 	sysfs_get_str(sess_id, ISCSI_FLASHNODE_SUBSYS, "password_in",
+-		      (fnode->sess).password,
++		      (fnode->sess).password_in,
+ 		      sizeof((fnode->sess).password_in));
+ 	sysfs_get_uint(conn_id, ISCSI_FLASHNODE_SUBSYS, "statsn",
+ 		       &((fnode->conn[0]).stat_sn));
+@@ -856,6 +856,71 @@ static int iscsi_sysfs_read_iface(struct iface_rec *iface, int host_no,
+ 
+ 		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "subnet",
+ 			      iface->subnet_mask, sizeof(iface->subnet_mask));
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			      "dhcp_alt_client_id_en",
++			      iface->dhcp_alt_client_id_state,
++			      sizeof(iface->dhcp_alt_client_id_state));
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			      "dhcp_alt_client_id",
++			      iface->dhcp_alt_client_id,
++			      sizeof(iface->dhcp_alt_client_id));
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			      "dhcp_dns_address_en",
++			      iface->dhcp_dns, sizeof(iface->dhcp_dns));
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			      "dhcp_learn_iqn_en",
++			      iface->dhcp_learn_iqn,
++			      sizeof(iface->dhcp_learn_iqn));
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			      "dhcp_req_vendor_id_en",
++			      iface->dhcp_req_vendor_id_state,
++			      sizeof(iface->dhcp_req_vendor_id_state));
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			      "dhcp_use_vendor_id_en",
++			      iface->dhcp_vendor_id_state,
++			      sizeof(iface->dhcp_vendor_id_state));
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			      "dhcp_vendor_id",
++			      iface->dhcp_vendor_id,
++			      sizeof(iface->dhcp_vendor_id));
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			      "dhcp_slp_da_info_en",
++			      iface->dhcp_slp_da, sizeof(iface->dhcp_slp_da));
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			      "fragment_disable",
++			      iface->fragmentation,
++			      sizeof(iface->fragmentation));
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			      "grat_arp_en",
++			      iface->gratuitous_arp,
++			      sizeof(iface->gratuitous_arp));
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			      "incoming_forwarding_en",
++			      iface->incoming_forwarding,
++			      sizeof(iface->incoming_forwarding));
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			      "tos_en",
++			      iface->tos_state, sizeof(iface->tos_state));
++
++		if (sysfs_get_uint8(iface_kern_id, ISCSI_IFACE_SUBSYS,
++				    "tos", &iface->tos))
++			iface->tos = 0;
++
++		if (sysfs_get_uint8(iface_kern_id, ISCSI_IFACE_SUBSYS,
++				    "ttl", &iface->ttl))
++			iface->ttl = 0;
+ 	} else {
+ 		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
+ 			      "ipaddr_autocfg",
+@@ -872,6 +937,53 @@ static int iscsi_sysfs_read_iface(struct iface_rec *iface, int host_no,
+ 		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "router_addr",
+ 			      iface->ipv6_router,
+ 			      sizeof(iface->ipv6_router));
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "router_state",
++			      iface->router_autocfg,
++			      sizeof(iface->router_autocfg));
++
++		if (sysfs_get_uint8(iface_kern_id, ISCSI_IFACE_SUBSYS,
++				    "dup_addr_detect_cnt",
++				    &iface->dup_addr_detect_cnt))
++			iface->dup_addr_detect_cnt = 0;
++
++		if (sysfs_get_uint(iface_kern_id, ISCSI_IFACE_SUBSYS,
++				   "flow_label", &iface->flow_label))
++			iface->flow_label = 0;
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			      "grat_neighbor_adv_en",
++			      iface->gratuitous_neighbor_adv,
++			      sizeof(iface->gratuitous_neighbor_adv));
++
++		if (sysfs_get_uint8(iface_kern_id, ISCSI_IFACE_SUBSYS,
++				    "hop_limit", &iface->hop_limit))
++			iface->hop_limit = 0;
++
++		sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "mld_en",
++			      iface->mld, sizeof(iface->mld));
++
++		if (sysfs_get_uint(iface_kern_id, ISCSI_IFACE_SUBSYS,
++				   "nd_reachable_tmo",
++				   &iface->nd_reachable_tmo))
++			iface->nd_reachable_tmo = 0;
++
++		if (sysfs_get_uint(iface_kern_id, ISCSI_IFACE_SUBSYS,
++				   "nd_rexmit_time", &iface->nd_rexmit_time))
++			iface->nd_rexmit_time = 0;
++
++		if (sysfs_get_uint(iface_kern_id, ISCSI_IFACE_SUBSYS,
++				   "nd_stale_tmo", &iface->nd_stale_tmo))
++			iface->nd_stale_tmo = 0;
++
++		if (sysfs_get_uint(iface_kern_id, ISCSI_IFACE_SUBSYS,
++				   "router_adv_link_mtu",
++				   &iface->router_adv_link_mtu))
++			iface->router_adv_link_mtu = 0;
++
++		if (sysfs_get_uint(iface_kern_id, ISCSI_IFACE_SUBSYS,
++				   "traffic_class", &iface->traffic_class))
++			iface->traffic_class = 0;
+ 	}
+ 
+ 	if (sysfs_get_uint16(iface_kern_id, ISCSI_IFACE_SUBSYS, "port",
+@@ -888,6 +1000,94 @@ static int iscsi_sysfs_read_iface(struct iface_rec *iface, int host_no,
+ 			    &iface->vlan_priority))
+ 		iface->vlan_priority = UINT8_MAX;
+ 
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "vlan_enabled",
++		      iface->vlan_state, sizeof(iface->vlan_state));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "enabled",
++		      iface->state, sizeof(iface->state));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "delayed_ack_en",
++		      iface->delayed_ack, sizeof(iface->delayed_ack));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "tcp_nagle_disable",
++		      iface->nagle, sizeof(iface->nagle));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "tcp_wsf_disable",
++		      iface->tcp_wsf_state, sizeof(iface->tcp_wsf_state));
++
++	if (sysfs_get_uint8(iface_kern_id, ISCSI_IFACE_SUBSYS, "tcp_wsf",
++			    &iface->tcp_wsf))
++		iface->tcp_wsf = 0;
++
++	if (sysfs_get_uint8(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			    "tcp_timer_scale", &iface->tcp_timer_scale))
++		iface->tcp_timer_scale = 0;
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "tcp_timestamp_en",
++		      iface->tcp_timestamp, sizeof(iface->tcp_timestamp));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "redirect_en",
++		      iface->redirect, sizeof(iface->redirect));
++
++	if (sysfs_get_uint16(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			     "def_taskmgmt_tmo", &iface->def_task_mgmt_tmo))
++		iface->def_task_mgmt_tmo = 0;
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "header_digest",
++		      iface->header_digest, sizeof(iface->header_digest));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "data_digest",
++		      iface->data_digest, sizeof(iface->data_digest));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "immediate_data",
++		      iface->immediate_data, sizeof(iface->immediate_data));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "initial_r2t",
++		      iface->initial_r2t, sizeof(iface->initial_r2t));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "data_seq_in_order",
++		      iface->data_seq_inorder, sizeof(iface->data_seq_inorder));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "data_pdu_in_order",
++		      iface->data_pdu_inorder, sizeof(iface->data_pdu_inorder));
++
++	if (sysfs_get_uint8(iface_kern_id, ISCSI_IFACE_SUBSYS, "erl",
++			    &iface->erl))
++		iface->erl = 0;
++
++	if (sysfs_get_uint(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			   "max_recv_dlength", &iface->max_recv_dlength))
++		iface->max_recv_dlength = 0;
++
++	if (sysfs_get_uint(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			   "first_burst_len", &iface->first_burst_len))
++		iface->first_burst_len = 0;
++
++	if (sysfs_get_uint16(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			     "max_outstanding_r2t", &iface->max_out_r2t))
++		iface->max_out_r2t = 0;
++
++	if (sysfs_get_uint(iface_kern_id, ISCSI_IFACE_SUBSYS,
++			   "max_burst_len", &iface->max_burst_len))
++		iface->max_burst_len = 0;
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "chap_auth",
++		      iface->chap_auth, sizeof(iface->chap_auth));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "bidi_chap",
++		      iface->bidi_chap, sizeof(iface->bidi_chap));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "strict_login_comp_en",
++		      iface->strict_login_comp,
++		      sizeof(iface->strict_login_comp));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS,
++		      "discovery_auth_optional",
++		      iface->discovery_auth, sizeof(iface->discovery_auth));
++
++	sysfs_get_str(iface_kern_id, ISCSI_IFACE_SUBSYS, "discovery_logout",
++		      iface->discovery_logout, sizeof(iface->discovery_logout));
++
+ 	if (sscanf(iface_kern_id, "ipv%d-iface-%u-%u", &iface_type,
+ 		   &tmp_host_no, &iface_num) == 3)
+ 		iface->iface_num = iface_num;
+diff --git a/usr/iscsiadm.c b/usr/iscsiadm.c
+index d8eb4b4..ba92d44 100644
+--- a/usr/iscsiadm.c
++++ b/usr/iscsiadm.c
+@@ -69,7 +69,8 @@ enum iscsiadm_mode {
+ 	MODE_FW,
+ 	MODE_PING,
+ 	MODE_CHAP,
+-	MODE_FLASHNODE
++	MODE_FLASHNODE,
++	MODE_HOST_STATS
+ };
+ 
+ enum iscsiadm_op {
+@@ -115,7 +116,7 @@ static struct option const long_options[] =
+ 	{"packetsize", required_argument, NULL, 'b'},
+ 	{"count", required_argument, NULL, 'c'},
+ 	{"interval", required_argument, NULL, 'i'},
+-	{"flashnode_idx", optional_argument, NULL, 'x'},
++	{"index", required_argument, NULL, 'x'},
+ 	{"portal_type", optional_argument, NULL, 'A'},
+ 	{NULL, 0, NULL, 0},
+ };
+@@ -136,7 +137,7 @@ iscsiadm -m node [ -hV ] [ -d debug_level ] [ -P printlevel ] [ -L all,manual,au
+ iscsiadm -m session [ -hV ] [ -d debug_level ] [ -P  printlevel] [ -r sessionid | sysfsdir [ -R | -u | -s ] [ -o operation ] [ -n name ] [ -v value ] ]\n\
+ iscsiadm -m iface [ -hV ] [ -d debug_level ] [ -P printlevel ] [ -I ifacename | -H hostno|MAC ] [ [ -o  operation  ] [ -n name ] [ -v value ] ] [ -C ping [ -a ip ] [ -b packetsize ] [ -c count ] [ -i interval ] ]\n\
+ iscsiadm -m fw [ -l ]\n\
+-iscsiadm -m host [ -P printlevel ] [ -H hostno|MAC ] [ [ -C chap [ -o operation ] [ -v chap_tbl_idx ] ] | [ -C flashnode [ -o operation ] [ -A portal_type ] [ -x flashnode_idx ] [ -n name ] [ -v value ] ] ]\n\
+++iscsiadm -m host [ -P printlevel ] [ -H hostno|MAC ] [ [ -C chap [ -x chap_tbl_idx ] ] | [ -C flashnode [ -A portal_type ] [ -x flashnode_idx ] ] | [ -C stats ] ] [ [ -o operation ] [ -n name ] [ -v value ] ] \n\
+ iscsiadm -k priority\n");
+ 	}
+ 	exit(status);
+@@ -207,6 +208,9 @@ str_to_submode(char *str)
+ 		sub_mode = MODE_CHAP;
+ 	else if (!strcmp("flashnode", str))
+ 		sub_mode = MODE_FLASHNODE;
++	else if (!strcmp("stats", str))
++		sub_mode = MODE_HOST_STATS;
++
+ 	else
+ 		sub_mode = -1;
+ 
+@@ -1416,18 +1420,192 @@ exit_chap_info:
+ 	return rc;
+ }
+ 
+-static int delete_host_chap_info(uint32_t host_no, char *value)
++static int fill_host_chap_rec(struct list_head *params,
++			      struct iscsi_chap_rec *crec, recinfo_t *cinfo,
++			      uint16_t chap_tbl_idx, int type, int *param_count)
++{
++	struct user_param *param;
++	int rc = 0;
++
++	crec->chap_tbl_idx = chap_tbl_idx;
++	crec->chap_type = type;
++
++	idbm_recinfo_host_chap(crec, cinfo);
++
++	list_for_each_entry(param, params, list) {
++		rc = idbm_rec_update_param(cinfo, param->name, param->value, 0);
++		if (rc)
++			break;
++	}
++
++	if (!rc)
++		*param_count += 3; /* index, type and password_length */
++
++	return rc;
++}
++
++static int verify_host_chap_params(struct list_head *params, int *type,
++				   int *param_count)
++{
++	struct user_param *param;
++	int username = -1;
++	int password = -1;
++	int rc = 0;
++
++	list_for_each_entry(param, params, list) {
++		*param_count += 1;
++
++		if (!strcmp(param->name, HOST_AUTH_USERNAME))
++			username = CHAP_TYPE_OUT;
++		else if (!strcmp(param->name, HOST_AUTH_PASSWORD))
++			password = CHAP_TYPE_OUT;
++		else if (!strcmp(param->name, HOST_AUTH_USERNAME_IN))
++			username = CHAP_TYPE_IN;
++		else if (!strcmp(param->name, HOST_AUTH_PASSWORD_IN))
++			password = CHAP_TYPE_IN;
++		else
++			continue;
++	}
++
++	if ((username == CHAP_TYPE_OUT) && (password == CHAP_TYPE_OUT)) {
++		if (type)
++			*type = CHAP_TYPE_OUT;
++
++		rc = ISCSI_SUCCESS;
++	} else if ((username == CHAP_TYPE_IN) && (password == CHAP_TYPE_IN)) {
++		if (type)
++			*type = CHAP_TYPE_IN;
++
++		rc = ISCSI_SUCCESS;
++	} else {
++		rc = ISCSI_ERR;
++	}
++
++	return rc;
++}
++
++static int set_host_chap_info(uint32_t host_no, uint64_t chap_index,
++			      struct list_head *params)
+ {
+ 	struct iscsi_transport *t = NULL;
+-	int fd, rc = 0;
+-	uint16_t chap_tbl_idx;
++	struct iscsi_chap_rec crec;
++	recinfo_t *chap_info = NULL;
++	struct iovec *iovs = NULL;
++	struct iovec *iov = NULL;
++	int type;
++	int param_count;
++	int param_used;
++	int rc = 0;
++	int fd, i = 0;
+ 
+-	if (!value) {
+-		log_error("CHAP deletion requires --value=table_index.");
+-		return ISCSI_ERR_INVAL;
++	if (list_empty(params)) {
++		log_error("Chap username/password not provided.");
++		goto exit_set_chap;
+ 	}
+ 
+-	chap_tbl_idx = (uint16_t)atoi(value);
++	chap_info = idbm_recinfo_alloc(MAX_KEYS);
++	if (!chap_info) {
++		log_error("Out of Memory.");
++		rc = ISCSI_ERR_NOMEM;
++		goto exit_set_chap;
++	}
++
++	t = iscsi_sysfs_get_transport_by_hba(host_no);
++	if (!t) {
++		log_error("Could not match hostno %d to transport.", host_no);
++		rc = ISCSI_ERR_TRANS_NOT_FOUND;
++		goto free_info_rec;
++	}
++
++	rc = verify_host_chap_params(params, &type, &param_count);
++	if (rc) {
++		log_error("Invalid username/password pair passed. Unable to determine the type of chap entry");
++		rc = ISCSI_ERR_INVAL;
++		goto free_info_rec;
++	}
++
++	if (param_count > 2) {
++		log_error("Only one pair of username/password can be passed.");
++		rc = ISCSI_ERR;
++		goto free_info_rec;
++	}
++
++	memset(&crec, 0, sizeof(crec));
++	rc = fill_host_chap_rec(params, &crec, chap_info, chap_index, type,
++				&param_count);
++	if (rc) {
++		log_error("Unable to fill CHAP record");
++		goto free_info_rec;
++	}
++
++	/* +2 for event and nlmsghdr */
++	param_count += 2;
++	iovs = calloc((param_count * sizeof(struct iovec)),
++		       sizeof(char));
++	if (!iovs) {
++		log_error("Out of Memory.");
++		rc = ISCSI_ERR_NOMEM;
++		goto free_info_rec;
++	}
++
++	/* param_used gives actual number of iovecs used for chap */
++	param_used = chap_build_config(&crec, iovs);
++	if (!param_used) {
++		log_error("Build chap config failed.");
++		rc = ISCSI_ERR;
++		goto free_iovec;
++	}
++
++	fd = ipc->ctldev_open();
++	if (fd < 0) {
++		rc = ISCSI_ERR_INTERNAL;
++		log_error("Netlink open failed.");
++		goto free_iovec;
++	}
++
++	rc = ipc->set_chap(t->handle, host_no, iovs, param_count);
++	if (rc < 0) {
++		log_error("CHAP setting failed");
++		if (rc == -EBUSY) {
++			rc = ISCSI_ERR_BUSY;
++			log_error("CHAP index %d is in use.",
++				  crec.chap_tbl_idx);
++		} else {
++			rc = ISCSI_ERR;
++		}
++
++		goto exit_set_chap;
++	}
++
++	ipc->ctldev_close();
++
++free_iovec:
++	/* start at 2, because 0 is for nlmsghdr and 1 for event */
++	iov = iovs + 2;
++	for (i = 0; i < param_used; i++, iov++) {
++		if (iov->iov_base)
++			free(iov->iov_base);
++	}
++
++	free(iovs);
++
++free_info_rec:
++	if (chap_info)
++		free(chap_info);
++
++exit_set_chap:
++	return rc;
++}
++
++static int delete_host_chap_info(uint32_t host_no, uint16_t chap_tbl_idx)
++{
++	struct iscsi_transport *t = NULL;
++	int fd, rc = 0;
++
++	if (chap_tbl_idx > MAX_CHAP_ENTRIES) {
++		log_error("Invalid chap table index.");
++		goto exit_delete_chap;
++	}
+ 
+ 	t = iscsi_sysfs_get_transport_by_hba(host_no);
+ 	if (!t) {
+@@ -1462,7 +1640,7 @@ exit_delete_chap:
+ }
+ 
+ static int exec_host_chap_op(int op, int info_level, uint32_t host_no,
+-			     char *value)
++			     uint64_t chap_index, struct list_head *params)
+ {
+ 	int rc = ISCSI_ERR_INVAL;
+ 
+@@ -1470,8 +1648,12 @@ static int exec_host_chap_op(int op, int info_level, uint32_t host_no,
+ 	case OP_SHOW:
+ 		rc = get_host_chap_info(host_no);
+ 		break;
++	case OP_NEW:
++	case OP_UPDATE:
++		rc = set_host_chap_info(host_no, chap_index, params);
++		break;
+ 	case OP_DELETE:
+-		rc = delete_host_chap_info(host_no, value);
++		rc = delete_host_chap_info(host_no, chap_index);
+ 		break;
+ 	default:
+ 		log_error("Invalid operation.");
+@@ -1734,20 +1916,22 @@ exit_logout_sid:
+ }
+ 
+ static int exec_flashnode_op(int op, int info_level, uint32_t host_no,
+-			     uint32_t flashnode_idx, int type,
++			     uint64_t fnode_idx, int type,
+ 			     struct list_head *params)
+ {
+ 	struct iscsi_transport *t = NULL;
+ 	int rc = ISCSI_SUCCESS;
+ 	char *portal_type;
++	uint32_t flashnode_idx;
+ 
+ 	if (op != OP_SHOW && op != OP_NOOP && op != OP_NEW &&
+-	    flashnode_idx == 0xffffffff) {
++	    fnode_idx > MAX_FLASHNODE_IDX) {
+ 		log_error("Invalid flashnode index");
+ 		rc = ISCSI_ERR_INVAL;
+ 		goto exit_flashnode_op;
+ 	}
+ 
++	flashnode_idx = (uint32_t)fnode_idx;
+ 	t = iscsi_sysfs_get_transport_by_hba(host_no);
+ 	if (!t) {
+ 		log_error("Could not match hostno %u to transport.", host_no);
+@@ -1758,7 +1942,7 @@ static int exec_flashnode_op(int op, int info_level, uint32_t host_no,
+ 	switch (op) {
+ 	case OP_NOOP:
+ 	case OP_SHOW:
+-		if (flashnode_idx == 0xffffffff)
++		if (fnode_idx > MAX_FLASHNODE_IDX)
+ 			rc = list_flashnodes(info_level, host_no);
+ 		else
+ 			rc = get_flashnode_info(host_no, flashnode_idx);
+@@ -1835,6 +2019,233 @@ exit_flashnode_op:
+ 	return rc;
+ }
+ 
++static void print_host_stats(struct iscsi_offload_host_stats *host_stats)
++{
++	/* MAC */
++	printf("Host Statistics:\n"
++	       "\tmactx_frames: %lld\n"
++	       "\tmactx_bytes: %lld\n"
++	       "\tmactx_multicast_frames: %lld\n"
++	       "\tmactx_broadcast_frames: %lld\n"
++	       "\tmactx_pause_frames: %lld\n"
++	       "\tmactx_control_frames: %lld\n"
++	       "\tmactx_deferral: %lld\n"
++	       "\tmactx_excess_deferral: %lld\n"
++	       "\tmactx_late_collision: %lld\n"
++	       "\tmactx_abort: %lld\n"
++	       "\tmactx_single_collision: %lld\n"
++	       "\tmactx_multiple_collision: %lld\n"
++	       "\tmactx_collision: %lld\n"
++	       "\tmactx_frames_dropped: %lld\n"
++	       "\tmactx_jumbo_frames: %lld\n"
++	       "\tmacrx_frames: %lld\n"
++	       "\tmacrx_bytes: %lld\n"
++	       "\tmacrx_unknown_control_frames: %lld\n"
++	       "\tmacrx_pause_frames: %lld\n"
++	       "\tmacrx_control_frames: %lld\n"
++	       "\tmacrx_dribble: %lld\n"
++	       "\tmacrx_frame_length_error: %lld\n"
++	       "\tmacrx_jabber: %lld\n"
++	       "\tmacrx_carrier_sense_error: %lld\n"
++	       "\tmacrx_frame_discarded: %lld\n"
++	       "\tmacrx_frames_dropped: %lld\n"
++	       "\tmac_crc_error: %lld\n"
++	       "\tmac_encoding_error: %lld\n"
++	       "\tmacrx_length_error_large: %lld\n"
++	       "\tmacrx_length_error_small: %lld\n"
++	       "\tmacrx_multicast_frames: %lld\n"
++	       "\tmacrx_broadcast_frames: %lld\n"
++	       /* IP */
++	       "\tiptx_packets: %lld\n"
++	       "\tiptx_bytes: %lld\n"
++	       "\tiptx_fragments: %lld\n"
++	       "\tiprx_packets: %lld\n"
++	       "\tiprx_bytes: %lld\n"
++	       "\tiprx_fragments: %lld\n"
++	       "\tip_datagram_reassembly: %lld\n"
++	       "\tip_invalid_address_error: %lld\n"
++	       "\tip_error_packets: %lld\n"
++	       "\tip_fragrx_overlap: %lld\n"
++	       "\tip_fragrx_outoforder: %lld\n"
++	       "\tip_datagram_reassembly_timeout: %lld\n"
++	       "\tipv6tx_packets: %lld\n"
++	       "\tipv6tx_bytes: %lld\n"
++	       "\tipv6tx_fragments: %lld\n"
++	       "\tipv6rx_packets: %lld\n"
++	       "\tipv6rx_bytes: %lld\n"
++	       "\tipv6rx_fragments: %lld\n"
++	       "\tipv6_datagram_reassembly: %lld\n"
++	       "\tipv6_invalid_address_error: %lld\n"
++	       "\tipv6_error_packets: %lld\n"
++	       "\tipv6_fragrx_overlap: %lld\n"
++	       "\tipv6_fragrx_outoforder: %lld\n"
++	       "\tipv6_datagram_reassembly_timeout: %lld\n"
++	       /* TCP */
++	       "\ttcptx_segments: %lld\n"
++	       "\ttcptx_bytes: %lld\n"
++	       "\ttcprx_segments: %lld\n"
++	       "\ttcprx_byte: %lld\n"
++	       "\ttcp_duplicate_ack_retx: %lld\n"
++	       "\ttcp_retx_timer_expired: %lld\n"
++	       "\ttcprx_duplicate_ack: %lld\n"
++	       "\ttcprx_pure_ackr: %lld\n"
++	       "\ttcptx_delayed_ack: %lld\n"
++	       "\ttcptx_pure_ack: %lld\n"
++	       "\ttcprx_segment_error: %lld\n"
++	       "\ttcprx_segment_outoforder: %lld\n"
++	       "\ttcprx_window_probe: %lld\n"
++	       "\ttcprx_window_update: %lld\n"
++	       "\ttcptx_window_probe_persist: %lld\n"
++	       /* ECC */
++	       "\tecc_error_correction: %lld\n"
++	       /* iSCSI */
++	       "\tiscsi_pdu_tx: %lld\n"
++	       "\tiscsi_data_bytes_tx: %lld\n"
++	       "\tiscsi_pdu_rx: %lld\n"
++	       "\tiscsi_data_bytes_rx: %lld\n"
++	       "\tiscsi_io_completed: %lld\n"
++	       "\tiscsi_unexpected_io_rx: %lld\n"
++	       "\tiscsi_format_error: %lld\n"
++	       "\tiscsi_hdr_digest_error: %lld\n"
++	       "\tiscsi_data_digest_error: %lld\n"
++	       "\tiscsi_sequence_error: %lld\n",
++	       /* MAC */
++	       (unsigned long long)host_stats->mactx_frames,
++	       (unsigned long long)host_stats->mactx_bytes,
++	       (unsigned long long)host_stats->mactx_multicast_frames,
++	       (unsigned long long)host_stats->mactx_broadcast_frames,
++	       (unsigned long long)host_stats->mactx_pause_frames,
++	       (unsigned long long)host_stats->mactx_control_frames,
++	       (unsigned long long)host_stats->mactx_deferral,
++	       (unsigned long long)host_stats->mactx_excess_deferral,
++	       (unsigned long long)host_stats->mactx_late_collision,
++	       (unsigned long long)host_stats->mactx_abort,
++	       (unsigned long long)host_stats->mactx_single_collision,
++	       (unsigned long long)host_stats->mactx_multiple_collision,
++	       (unsigned long long)host_stats->mactx_collision,
++	       (unsigned long long)host_stats->mactx_frames_dropped,
++	       (unsigned long long)host_stats->mactx_jumbo_frames,
++	       (unsigned long long)host_stats->macrx_frames,
++	       (unsigned long long)host_stats->macrx_bytes,
++	       (unsigned long long)host_stats->macrx_unknown_control_frames,
++	       (unsigned long long)host_stats->macrx_pause_frames,
++	       (unsigned long long)host_stats->macrx_control_frames,
++	       (unsigned long long)host_stats->macrx_dribble,
++	       (unsigned long long)host_stats->macrx_frame_length_error,
++	       (unsigned long long)host_stats->macrx_jabber,
++	       (unsigned long long)host_stats->macrx_carrier_sense_error,
++	       (unsigned long long)host_stats->macrx_frame_discarded,
++	       (unsigned long long)host_stats->macrx_frames_dropped,
++	       (unsigned long long)host_stats->mac_crc_error,
++	       (unsigned long long)host_stats->mac_encoding_error,
++	       (unsigned long long)host_stats->macrx_length_error_large,
++	       (unsigned long long)host_stats->macrx_length_error_small,
++	       (unsigned long long)host_stats->macrx_multicast_frames,
++	       (unsigned long long)host_stats->macrx_broadcast_frames,
++	       /* IP */
++	       (unsigned long long)host_stats->iptx_packets,
++	       (unsigned long long)host_stats->iptx_bytes,
++	       (unsigned long long)host_stats->iptx_fragments,
++	       (unsigned long long)host_stats->iprx_packets,
++	       (unsigned long long)host_stats->iprx_bytes,
++	       (unsigned long long)host_stats->iprx_fragments,
++	       (unsigned long long)host_stats->ip_datagram_reassembly,
++	       (unsigned long long)host_stats->ip_invalid_address_error,
++	       (unsigned long long)host_stats->ip_error_packets,
++	       (unsigned long long)host_stats->ip_fragrx_overlap,
++	       (unsigned long long)host_stats->ip_fragrx_outoforder,
++	       (unsigned long long)host_stats->ip_datagram_reassembly_timeout,
++	       (unsigned long long)host_stats->ipv6tx_packets,
++	       (unsigned long long)host_stats->ipv6tx_bytes,
++	       (unsigned long long)host_stats->ipv6tx_fragments,
++	       (unsigned long long)host_stats->ipv6rx_packets,
++	       (unsigned long long)host_stats->ipv6rx_bytes,
++	       (unsigned long long)host_stats->ipv6rx_fragments,
++	       (unsigned long long)host_stats->ipv6_datagram_reassembly,
++	       (unsigned long long)host_stats->ipv6_invalid_address_error,
++	       (unsigned long long)host_stats->ipv6_error_packets,
++	       (unsigned long long)host_stats->ipv6_fragrx_overlap,
++	       (unsigned long long)host_stats->ipv6_fragrx_outoforder,
++	       (unsigned long long)host_stats->ipv6_datagram_reassembly_timeout,
++	       /* TCP */
++	       (unsigned long long)host_stats->tcptx_segments,
++	       (unsigned long long)host_stats->tcptx_bytes,
++	       (unsigned long long)host_stats->tcprx_segments,
++	       (unsigned long long)host_stats->tcprx_byte,
++	       (unsigned long long)host_stats->tcp_duplicate_ack_retx,
++	       (unsigned long long)host_stats->tcp_retx_timer_expired,
++	       (unsigned long long)host_stats->tcprx_duplicate_ack,
++	       (unsigned long long)host_stats->tcprx_pure_ackr,
++	       (unsigned long long)host_stats->tcptx_delayed_ack,
++	       (unsigned long long)host_stats->tcptx_pure_ack,
++	       (unsigned long long)host_stats->tcprx_segment_error,
++	       (unsigned long long)host_stats->tcprx_segment_outoforder,
++	       (unsigned long long)host_stats->tcprx_window_probe,
++	       (unsigned long long)host_stats->tcprx_window_update,
++	       (unsigned long long)host_stats->tcptx_window_probe_persist,
++	       /* ECC */
++	       (unsigned long long)host_stats->ecc_error_correction,
++	       /* iSCSI */
++	       (unsigned long long)host_stats->iscsi_pdu_tx,
++	       (unsigned long long)host_stats->iscsi_data_bytes_tx,
++	       (unsigned long long)host_stats->iscsi_pdu_rx,
++	       (unsigned long long)host_stats->iscsi_data_bytes_rx,
++	       (unsigned long long)host_stats->iscsi_io_completed,
++	       (unsigned long long)host_stats->iscsi_unexpected_io_rx,
++	       (unsigned long long)host_stats->iscsi_format_error,
++	       (unsigned long long)host_stats->iscsi_hdr_digest_error,
++	       (unsigned long long)host_stats->iscsi_data_digest_error,
++	       (unsigned long long)host_stats->iscsi_sequence_error);
++}
++
++static int exec_host_stats_op(int op, int info_level, uint32_t host_no)
++{
++	struct iscsi_transport *t = NULL;
++	char *req_buf;
++	int rc = ISCSI_SUCCESS;
++	int fd = 0, buf_size = 0;
++
++	t = iscsi_sysfs_get_transport_by_hba(host_no);
++	if (!t) {
++		log_error("Could not match hostno %u to transport.", host_no);
++		rc = ISCSI_ERR_TRANS_NOT_FOUND;
++		goto exit_host_stats;
++	}
++
++	buf_size = sizeof(struct iscsi_offload_host_stats) +
++		   sizeof(struct iscsi_uevent);
++	req_buf = calloc(1, buf_size);
++	if (!req_buf) {
++		log_error("Could not allocate memory for host stats request.");
++		rc = ISCSI_ERR_NOMEM;
++		goto exit_host_stats;
++	}
++
++	fd = ipc->ctldev_open();
++	if (fd < 0) {
++		rc = ISCSI_ERR_INTERNAL;
++		log_error("Netlink open failed.");
++		goto exit_host_stats;
++	}
++
++	rc = ipc->get_host_stats(t->handle, host_no, req_buf);
++	if (rc < 0) {
++		log_error("get_host_stats failed. errno=%d", errno);
++		rc = ISCSI_ERR;
++		goto exit_host_stats;
++	}
++
++	print_host_stats((struct iscsi_offload_host_stats *)(req_buf +
++			 sizeof(struct iscsi_uevent)));
++
++	ipc->ctldev_close();
++
++exit_host_stats:
++	if (req_buf)
++		free(req_buf);
++	return rc;
++}
++
+ static int verify_iface_params(struct list_head *params, struct node_rec *rec)
+ {
+ 	struct user_param *param;
+@@ -1870,7 +2281,7 @@ static int verify_iface_params(struct list_head *params, struct node_rec *rec)
+ 
+ /* TODO: merge iter helpers and clean them up, so we can use them here */
+ static int exec_iface_op(int op, int do_show, int info_level,
+-			 struct iface_rec *iface, uint32_t host_no,
++			 struct iface_rec *iface, uint64_t host_no,
+ 			 struct list_head *params)
+ {
+ 	struct host_info hinfo;
+@@ -1991,9 +2402,9 @@ update_fail:
+ 		printf("%s applied.\n", iface->name);
+ 		break;
+ 	case OP_APPLY_ALL:
+-		if (host_no == -1) {
+-			log_error("Applyall requires a host number or MAC "
+-				  "passed in with the --host argument.");
++		if (host_no > MAX_HOST_NO) {
++			log_error("Applyall requires a valid host number or MAC"
++				  " passed in with the --host argument.");
+ 			rc = ISCSI_ERR_INVAL;
+ 			break;
+ 		}
+@@ -2004,7 +2415,7 @@ update_fail:
+ 		memset(&hinfo, 0, sizeof(struct host_info));
+ 		hinfo.host_no = host_no;
+ 		if (iscsi_sysfs_get_hostinfo_by_host_no(&hinfo)) {
+-			log_error("Could not match host%u to ifaces.", host_no);
++			log_error("Could not match host%lu to ifaces.", host_no);
+ 			rc = ISCSI_ERR_INVAL;
+ 			break;
+ 		}
+@@ -2015,7 +2426,7 @@ update_fail:
+ 			break;
+ 		}
+ 
+-		printf("Applied settings to ifaces attached to host%u.\n",
++		printf("Applied settings to ifaces attached to host%lu.\n",
+ 		       host_no);
+ 		break;
+ 	default:
+@@ -2631,10 +3042,10 @@ done:
+ 	return rc;
+ }
+ 
+-static uint32_t parse_host_info(char *optarg, int *rc)
++static uint64_t parse_host_info(char *optarg, int *rc)
+ {
+ 	int err = 0;
+-	uint32_t host_no = -1;
++	uint64_t host_no;
+ 
+ 	*rc = 0;
+ 	if (strstr(optarg, ":")) {
+@@ -2647,8 +3058,11 @@ static uint32_t parse_host_info(char *optarg, int *rc)
+ 			*rc = ISCSI_ERR_INVAL;
+ 		}
+ 	} else {
+-		host_no = strtoul(optarg, NULL, 10);
+-		if (errno) {
++		host_no = strtoull(optarg, NULL, 10);
++		if (errno || (host_no > MAX_HOST_NO)) {
++			if (host_no > MAX_HOST_NO)
++				errno = ERANGE;
++
+ 			log_error("Invalid host no %s. %s.",
+ 				  optarg, strerror(errno));
+ 			*rc = ISCSI_ERR_INVAL;
+@@ -2800,13 +3214,14 @@ main(int argc, char **argv)
+ 	int tpgt = PORTAL_GROUP_TAG_UNKNOWN, killiscsid=-1, do_show=0;
+ 	int packet_size=32, ping_count=1, ping_interval=0;
+ 	int do_discover = 0, sub_mode = -1;
+-	int flashnode_idx = -1, portal_type = -1;
++	int portal_type = -1;
+ 	struct sigaction sa_old;
+ 	struct sigaction sa_new;
+ 	struct list_head ifaces;
+ 	struct iface_rec *iface = NULL, *tmp;
+ 	struct node_rec *rec = NULL;
+-	uint32_t host_no = -1;
++	uint64_t host_no =  (uint64_t)MAX_HOST_NO + 1;
++	uint64_t index = ULLONG_MAX;
+ 	struct user_param *param;
+ 	struct list_head params;
+ 
+@@ -2950,7 +3365,13 @@ main(int argc, char **argv)
+ 				ISCSI_VERSION_STR);
+ 			return 0;
+ 		case 'x':
+-			flashnode_idx = atoi(optarg);
++			index = strtoull(optarg, NULL, 10);
++			if (errno) {
++				log_error("Invalid index %s. %s.",
++					  optarg, strerror(errno));
++				rc = ISCSI_ERR_INVAL;
++				goto free_ifaces;
++			}
+ 			break;
+ 		case 'A':
+ 			portal_type = str_to_portal_type(optarg);
+@@ -3016,26 +3437,44 @@ main(int argc, char **argv)
+ 		if (sub_mode != -1) {
+ 			switch (sub_mode) {
+ 			case MODE_CHAP:
+-				if (!op || !host_no) {
++				if (!op || (host_no > MAX_HOST_NO)) {
+ 					log_error("CHAP mode requires host "
+ 						"no and valid operation");
+ 					rc = ISCSI_ERR_INVAL;
+ 					break;
+ 				}
++
++				if (index == ULLONG_MAX)
++					index = (uint64_t)MAX_CHAP_ENTRIES + 1;
++
+ 				rc = exec_host_chap_op(op, info_level, host_no,
+-						       value);
++						       index, &params);
+ 				break;
+ 			case MODE_FLASHNODE:
+-				if (!host_no) {
++				if (host_no > MAX_HOST_NO) {
+ 					log_error("FLASHNODE mode requires host no");
+ 					rc = ISCSI_ERR_INVAL;
+ 					break;
+ 				}
+ 
++				if (index == ULLONG_MAX)
++					index = (uint64_t)MAX_FLASHNODE_IDX + 1;
++
+ 				rc = exec_flashnode_op(op, info_level, host_no,
+-						       flashnode_idx,
+-						       portal_type, &params);
++						       index, portal_type,
++						       &params);
++				break;
++			case MODE_HOST_STATS:
++				if (host_no > MAX_HOST_NO) {
++					log_error("STATS mode requires host no");
++					rc = ISCSI_ERR_INVAL;
++					break;
++				}
++
++				rc = exec_host_stats_op(op, info_level,
++							host_no);
+ 				break;
++
+ 			default:
+ 				log_error("Invalid Sub Mode");
+ 				break;
+diff --git a/usr/netlink.c b/usr/netlink.c
+index c07fe3c..1c4b5cc 100644
+--- a/usr/netlink.c
++++ b/usr/netlink.c
+@@ -339,6 +339,10 @@ __kipc_call(struct iovec *iovp, int count)
+ 		} else if (ev->type == ISCSI_UEVENT_GET_CHAP) {
+ 			/* kget_chap() will read */
+ 			return 0;
++		} else if (ev->type == ISCSI_UEVENT_GET_HOST_STATS) {
++			/* kget_host_stats() will read */
++			return 0;
++
+ 		} else {
+ 			if ((rc = nlpayload_read(ctrl_fd, (void*)ev,
+ 						 sizeof(*ev), 0)) < 0) {
+@@ -1228,6 +1232,30 @@ static int kget_chap(uint64_t transport_handle, uint32_t host_no,
+ 	return rc;
+ }
+ 
++static int kset_chap(uint64_t transport_handle, uint32_t host_no,
++			struct iovec *iovs, uint32_t param_count)
++{
++	int rc, ev_len;
++	struct iscsi_uevent ev;
++	struct iovec *iov = iovs + 1;
++
++	log_debug(8, "in %s", __func__);
++
++	ev_len = sizeof(ev);
++	ev.type = ISCSI_UEVENT_SET_CHAP;
++	ev.transport_handle = transport_handle;
++	ev.u.set_path.host_no = host_no;
++
++	iov->iov_base = &ev;
++	iov->iov_len = sizeof(ev);
++
++	rc = __kipc_call(iovs, param_count);
++	if (rc < 0)
++		return rc;
++
++	return 0;
++}
++
+ static int kdelete_chap(uint64_t transport_handle, uint32_t host_no,
+ 			uint16_t chap_tbl_idx)
+ {
+@@ -1415,6 +1443,48 @@ klogout_flashnode_sid(uint64_t transport_handle, uint32_t host_no,
+ 	return 0;
+ }
+ 
++static int kget_host_stats(uint64_t transport_handle, uint32_t host_no,
++		     char *host_stats)
++{
++	int rc = 0;
++	int ev_size;
++	struct iscsi_uevent ev;
++	struct iovec iov[2];
++	char nlm_ev[NLMSG_SPACE(sizeof(struct iscsi_uevent))];
++	struct nlmsghdr *nlh;
++
++	memset(&ev, 0, sizeof(struct iscsi_uevent));
++
++	ev.type = ISCSI_UEVENT_GET_HOST_STATS;
++	ev.transport_handle = transport_handle;
++	ev.u.get_host_stats.host_no = host_no;
++
++	iov[1].iov_base = &ev;
++	iov[1].iov_len = sizeof(ev);
++	rc = __kipc_call(iov, 2);
++	if (rc < 0)
++		return rc;
++
++	if ((rc = nl_read(ctrl_fd, nlm_ev,
++			  NLMSG_SPACE(sizeof(struct iscsi_uevent)),
++			  MSG_PEEK)) < 0) {
++		log_error("can not read nlm_ev, error %d", rc);
++		return rc;
++	}
++
++	nlh = (struct nlmsghdr *)nlm_ev;
++	ev_size = nlh->nlmsg_len - NLMSG_ALIGN(sizeof(struct nlmsghdr));
++
++	if ((rc = nlpayload_read(ctrl_fd, (void *)host_stats,
++				 ev_size, 0)) < 0) {
++		log_error("can not read from NL socket, error %d", rc);
++		return rc;
++	}
++
++	return rc;
++}
++
++
+ static void drop_data(struct nlmsghdr *nlh)
+ {
+ 	int ev_size;
+@@ -1705,6 +1775,7 @@ struct iscsi_ipc nl_ipc = {
+ 	.recv_conn_state        = krecv_conn_state,
+ 	.exec_ping		= kexec_ping,
+ 	.get_chap		= kget_chap,
++	.set_chap		= kset_chap,
+ 	.delete_chap		= kdelete_chap,
+ 	.set_flash_node_params	= kset_flashnode_params,
+ 	.new_flash_node		= knew_flashnode,
+@@ -1712,6 +1783,7 @@ struct iscsi_ipc nl_ipc = {
+ 	.login_flash_node	= klogin_flashnode,
+ 	.logout_flash_node	= klogout_flashnode,
+ 	.logout_flash_node_sid	= klogout_flashnode_sid,
++	.get_host_stats		= kget_host_stats,
+ };
+ struct iscsi_ipc *ipc = &nl_ipc;
+ 
+diff --git a/usr/session_info.c b/usr/session_info.c
+index de156c6..2f48e65 100644
+--- a/usr/session_info.c
++++ b/usr/session_info.c
+@@ -64,20 +64,32 @@ void session_info_free_list(struct list_head *list)
+ 	}
+ }
+ 
++static char *get_iscsi_node_type(struct session_info *info)
++{
++	int pid = iscsi_sysfs_session_user_created(info->sid);
++
++	if (!pid)
++		return "flash";
++	else
++		return "non-flash";
++}
++
+ static int session_info_print_flat(void *data, struct session_info *info)
+ {
+ 	struct iscsi_transport *t = iscsi_sysfs_get_transport_by_sid(info->sid);
+ 
+ 	if (strchr(info->persistent_address, '.'))
+-		printf("%s: [%d] %s:%d,%d %s\n",
++		printf("%s: [%d] %s:%d,%d %s (%s)\n",
+ 			t ? t->name : UNKNOWN_VALUE,
+ 			info->sid, info->persistent_address,
+-			info->persistent_port, info->tpgt, info->targetname);
++			info->persistent_port, info->tpgt, info->targetname,
++			get_iscsi_node_type(info));
+ 	else
+-		printf("%s: [%d] [%s]:%d,%d %s\n",
++		printf("%s: [%d] [%s]:%d,%d %s (%s)\n",
+ 			t ? t->name : UNKNOWN_VALUE,
+ 			info->sid, info->persistent_address,
+-			info->persistent_port, info->tpgt, info->targetname);
++			info->persistent_port, info->tpgt, info->targetname,
++			get_iscsi_node_type(info));
+ 	return 0;
+ }
+ 
+@@ -230,7 +242,8 @@ void session_info_print_tree(struct list_head *list, char *prefix,
+ 
+ 	list_for_each_entry(curr, list, list) {
+ 		if (!prev || strcmp(prev->targetname, curr->targetname)) {
+-			printf("%sTarget: %s\n", prefix, curr->targetname);
++			printf("%sTarget: %s (%s)\n", prefix, curr->targetname,
++				get_iscsi_node_type(curr));
+ 			prev = NULL;
+ 		}
+ 
+@@ -278,6 +291,7 @@ void session_info_print_tree(struct list_head *list, char *prefix,
+ 			printf("%s\t\tSID: %d\n", prefix, curr->sid);
+ 			print_iscsi_state(curr->sid, prefix);
+ 		}
++
+ 		if (flags & SESSION_INFO_ISCSI_TIM) {
+ 			printf("%s\t\t*********\n", prefix);
+ 			printf("%s\t\tTimeouts:\n", prefix);
+diff --git a/usr/types.h b/usr/types.h
+index 77e3f97..9d9ba86 100644
+--- a/usr/types.h
++++ b/usr/types.h
+@@ -10,6 +10,7 @@
+ #include <netinet/in.h>
+ #include <stdint.h>
+ #include <sys/types.h>
++#include <limits.h>
+ 
+ /*
+  * using the __be types allows stricter static
+-- 
+1.7.1
+

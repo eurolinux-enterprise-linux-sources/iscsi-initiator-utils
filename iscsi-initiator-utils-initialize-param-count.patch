@@ -1,0 +1,27 @@
+From 5762ac0a9520d10e727b539403eacb7ab092e45f Mon Sep 17 00:00:00 2001
+From: Manish Rangankar <manish.rangankar@qlogic.com>
+Date: Thu, 17 Jul 2014 05:27:20 -0400
+Subject: [PATCH] iscsiadm: Initialize param_count in set_host_chap_info
+
+Signed-off-by: Manish Rangankar <manish.rangankar@qlogic.com>
+Signed-off-by: Vikas Chaudhary <vikas.chaudhary@qlogic.com>
+---
+ usr/iscsiadm.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/usr/iscsiadm.c b/usr/iscsiadm.c
+index 389f4b8..f886d39 100644
+--- a/usr/iscsiadm.c
++++ b/usr/iscsiadm.c
+@@ -1503,7 +1503,7 @@ static int set_host_chap_info(uint32_t host_no, uint64_t chap_index,
+ 	struct iovec *iovs = NULL;
+ 	struct iovec *iov = NULL;
+ 	int type;
+-	int param_count;
++	int param_count = 0;
+ 	int param_used;
+ 	int rc = 0;
+ 	int fd, i = 0;
+-- 
+1.9.3
+

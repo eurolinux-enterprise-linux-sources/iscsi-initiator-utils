@@ -1,0 +1,32 @@
+From 16681b801d49946eae5fb26783443deb11f3b141 Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@cleech.csb>
+Date: Wed, 18 Jun 2014 11:19:17 -0700
+Subject: backwards compat IPC sock address
+
+Resolves #1052361
+fixes communication issues between iscsiadm and running iscsid on upgrade
+---
+ usr/iscsid_req.c |    7 +++++++
+ 1 files changed, 7 insertions(+), 0 deletions(-)
+
+diff --git a/usr/iscsid_req.c b/usr/iscsid_req.c
+index 715c0aa..3e7826c 100644
+--- a/usr/iscsid_req.c
++++ b/usr/iscsid_req.c
+@@ -82,6 +82,13 @@ static int ipc_connect(int *fd, char *unix_sock_name, int start_iscsid)
+ 			/* Connection established */
+ 			return ISCSI_SUCCESS;
+ 
++		/* might be an old iscsid, try incorrect address len */
++		if (errno == ECONNREFUSED) {
++			if (connect(*fd, (struct sockaddr *) &addr, sizeof(addr)) == 0)
++				/* Connection established */
++				return ISCSI_SUCCESS;
++		}
++
+ 		/* If iscsid isn't there, there's no sense
+ 		 * in retrying. */
+ 		if (errno == ECONNREFUSED) {
+-- 
+1.7.1
+

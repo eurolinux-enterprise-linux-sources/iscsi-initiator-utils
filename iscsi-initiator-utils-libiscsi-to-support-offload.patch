@@ -1,0 +1,237 @@
+From 1971024a7c6c2c2cf848aba93bd85a707875f216 Mon Sep 17 00:00:00 2001
+From: Manish Rangankar <manish.rangankar@qlogic.com>
+Date: Wed, 12 Oct 2011 18:57:25 +0530
+Subject: [PATCH 2/2] iscsi tools: Modified libisci to support offload.
+
+For an offload solution like qla4xxx requires to do discovery on per port
+basis from application. To do that libiscsi need to be modified to take
+iSCSI HW address as a input parameter and find out the current active
+iface for a given port. Using this iface we can do discovery to a
+given port.
+
+Signed-off-by: Manish Rangankar <manish.rangankar@qlogic.com>
+---
+ libiscsi/libiscsi.c |  148 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ libiscsi/libiscsi.h |   33 +++++++++++
+ usr/iface.c         |    2 +-
+ 3 files changed, 182 insertions(+), 1 deletions(-)
+
+diff --git a/libiscsi/libiscsi.c b/libiscsi/libiscsi.c
+index dc63fcd..9b15f01 100644
+--- a/libiscsi/libiscsi.c
++++ b/libiscsi/libiscsi.c
+@@ -202,6 +202,154 @@ leave:
+ 	return rc;
+ }
+ 
++static int get_active_ifaces_form_host(struct list_head *ifaces, char *hw_addr,
++				       const char *address, int *nr_iface)
++{
++	int iptype = ISCSI_IFACE_TYPE_IPV4;
++	struct iface_rec *usr_iface, *tmp_iface;
++	struct list_head t_ifaces;
++	int rc = 0;
++
++	INIT_LIST_HEAD(&t_ifaces);
++
++	iface_link_ifaces(&t_ifaces);
++	list_for_each_entry_safe(usr_iface, tmp_iface, &t_ifaces, list) {
++		(*nr_iface)++;
++		if (strcmp(usr_iface->hwaddress, hw_addr)) {
++			(*nr_iface)--;
++			list_del(&usr_iface->list);
++			free(usr_iface);
++		}
++	}
++
++	if (!strstr(address, ".") && strstr(address, ":"))
++		iptype = ISCSI_IFACE_TYPE_IPV6;
++	else if (strstr(address, ".") && !strstr(address, ":"))
++		iptype = ISCSI_IFACE_TYPE_IPV4;
++
++	list_for_each_entry_safe(usr_iface, tmp_iface, &t_ifaces, list) {
++		if (iptype == ISCSI_IFACE_TYPE_IPV4) {
++			if (strstr(usr_iface->name, "ipv4")) {
++				iface_link(ifaces, usr_iface);
++				goto exit_iface;
++			}
++		} else if (iptype == ISCSI_IFACE_TYPE_IPV6) {
++			if (strstr(usr_iface->name, "ipv6")) {
++				iface_link(ifaces, usr_iface);
++				goto exit_iface;
++			}
++		}
++	}
++
++exit_iface:
++	free_iface_list(&t_ifaces);
++	return rc;
++}
++
++int libiscsi_discover_sendtargets_by_hwaddr(struct libiscsi_context *context,
++	const char *address, int port,
++	const struct libiscsi_auth_info *auth_info, char *hw_addr,
++	int *nr_found, struct libiscsi_node **found_nodes)
++{
++	struct discovery_rec drec;
++	LIST_HEAD(bound_rec_list);
++	struct list_head *ifaces, tmp;
++	struct node_rec *rec;
++	int rc = 0, found = 0, nr_iface = 0;
++
++	INIT_LIST_HEAD(&bound_rec_list);
++	INIT_LIST_HEAD(&tmp);
++
++	if (hw_addr == NULL) {
++		strcpy(context->error_str, "Invalid argument");
++		rc = EINVAL;
++		return rc;
++	}
++
++	rc = get_active_ifaces_form_host(&tmp, hw_addr, address,
++					 &nr_iface);
++	if (rc == EINVAL) {
++		strcpy(context->error_str, "Invalid argument");
++		return rc;
++	} else if (nr_iface == 0) {
++		strcpy(context->error_str, "No iface record");
++		return ENODEV;
++	}
++	ifaces = &tmp;
++
++	if (nr_found)
++		*nr_found = 0;
++	if (found_nodes)
++		*found_nodes = NULL;
++
++	CHECK(libiscsi_verify_auth_info(context, auth_info))
++
++	/* Fill the drec struct with all needed info */
++	memset(&drec, 0, sizeof drec);
++	idbm_sendtargets_defaults(&drec.u.sendtargets);
++	drec.type = DISCOVERY_TYPE_SENDTARGETS;
++	strlcpy(drec.address, address, sizeof(drec.address));
++	drec.port = port ? port : ISCSI_LISTEN_PORT;
++	switch (auth_info ? auth_info->method : libiscsi_auth_none) {
++	case libiscsi_auth_chap:
++		drec.u.sendtargets.auth.authmethod = AUTH_METHOD_CHAP;
++		strlcpy(drec.u.sendtargets.auth.username,
++			auth_info->chap.username, AUTH_STR_MAX_LEN);
++		strlcpy((char *)drec.u.sendtargets.auth.password,
++			auth_info->chap.password, AUTH_STR_MAX_LEN);
++		drec.u.sendtargets.auth.password_length =
++			strlen((char *)drec.u.sendtargets.auth.password);
++		strlcpy(drec.u.sendtargets.auth.username_in,
++			auth_info->chap.reverse_username, AUTH_STR_MAX_LEN);
++		strlcpy((char *)drec.u.sendtargets.auth.password_in,
++			auth_info->chap.reverse_password, AUTH_STR_MAX_LEN);
++		drec.u.sendtargets.auth.password_in_length =
++			strlen((char *)drec.u.sendtargets.auth.password_in);
++		break;
++	}
++
++	CHECK(idbm_add_discovery(&drec))
++	CHECK(idbm_bind_ifaces_to_nodes(discovery_sendtargets,
++					&drec, ifaces, &bound_rec_list))
++
++	/* now add/update records */
++	list_for_each_entry(rec, &bound_rec_list, list) {
++		CHECK(idbm_add_node(rec, &drec, 1 /* overwrite */))
++		found++;
++	}
++
++	if (nr_found)
++		*nr_found = found;
++
++	if (found_nodes && found) {
++		*found_nodes = calloc(found, sizeof **found_nodes);
++		if (*found_nodes == NULL) {
++			snprintf(context->error_str,
++				 sizeof(context->error_str), strerror(ENOMEM));
++			rc = ENOMEM;
++			goto leave;
++		}
++		found = 0;
++		list_for_each_entry(rec, &bound_rec_list, list) {
++			strlcpy((*found_nodes)[found].name, rec->name,
++				 LIBISCSI_VALUE_MAXLEN);
++			(*found_nodes)[found].tpgt = rec->tpgt;
++			strlcpy((*found_nodes)[found].address,
++				 rec->conn[0].address, NI_MAXHOST);
++			(*found_nodes)[found].port = rec->conn[0].port;
++			strlcpy((*found_nodes)[found].iface,
++				 rec->iface.name, LIBISCSI_VALUE_MAXLEN);
++			found++;
++		}
++	}
++
++leave:
++	free_iface_list(ifaces);
++	free_rec_list(&bound_rec_list);
++	return rc;
++}
++
++
+ int libiscsi_discover_firmware(struct libiscsi_context *context,
+ 	int *nr_found, struct libiscsi_node **found_nodes)
+ {
+diff --git a/libiscsi/libiscsi.h b/libiscsi/libiscsi.h
+index 61ce0ea..1d8ae7c 100644
+--- a/libiscsi/libiscsi.h
++++ b/libiscsi/libiscsi.h
+@@ -142,6 +142,39 @@ PUBLIC int libiscsi_discover_sendtargets(struct libiscsi_context *context,
+     const char *address, int port, const struct libiscsi_auth_info *auth_info,
+     int *nr_found, struct libiscsi_node **found_nodes);
+ 
++/** \brief Discover iSCSI nodes using sendtargets and add them to the node db.
++ *
++ * This function connects to the given address and port and then tries to
++ * discover iSCSI nodes for a given iSCSI port using the sendtargets protocol.
++ * Any found nodes are added to the local iSCSI node database and are returned
++ * in a dynamically allocated array.
++ *
++ * Note that the (optional) authentication info is for authenticating the
++ * discovery, and is not for the found nodes! If the connection(s) to the
++ * node(s) need authentication too, you can set the username / password for
++ * those (which can be different!) using the libiscsi_node_set_auth() function.
++ *
++ * \param context                libiscsi context to operate on.
++ * \param address                Hostname or IP-address to connect to.
++ * \param port                   Port to connect to, or 0 for the default port.
++ * \param auth_info              Authentication information, or NULL.
++ * \param hw_addr                iSCSI iface mac address.
++ * \param nr_found		 The number of found nodes will be returned
++ *                               through this pointer if not NULL.
++ * \param found_nodes            The address of the dynamically allocated array
++ *                               of found nodes will be returned through this
++ *                               pointer if not NULL. The caller must free this
++ *                               array using free().
++ * \return                       0 on success, otherwise a standard error code
++ *                               (from errno.h).
++ */
++PUBLIC int libiscsi_discover_sendtargets_by_hwaddr(
++				struct libiscsi_context *context,
++				const char *address, int port,
++				const struct libiscsi_auth_info *auth_info,
++				char *hw_addr, int *nr_found,
++				struct libiscsi_node **found_nodes);
++
+ /** \brief Read iSCSI node info from firmware and add them to the node db.
+  *
+  * This function discovers iSCSI nodes using firmware (ppc or ibft). Any found
+diff --git a/usr/iface.c b/usr/iface.c
+index 9431a97..1531291 100644
+--- a/usr/iface.c
++++ b/usr/iface.c
+@@ -789,7 +789,7 @@ int iface_for_each_iface(void *data, int skip_def, int *nr_found,
+ 	return err;
+ }
+ 
+-static int iface_link(void *data, struct iface_rec *iface)
++int iface_link(void *data, struct iface_rec *iface)
+ {
+ 	struct list_head *ifaces = data;
+ 	struct iface_rec *iface_copy;
+-- 
+1.7.1
+

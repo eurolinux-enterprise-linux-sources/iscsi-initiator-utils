@@ -1,0 +1,274 @@
+                              Release Notes
+                        Broadcom uIP Linux Driver
+                              Version 0.5.15
+                                05/20/2010
+
+                          Broadcom Corporation
+                         5300 California Avenue,
+                            Irvine, CA 92617
+
+               Copyright (c) 2004 - 2010 Broadcom Corporation
+                           All rights reserved
+
+uIP v0.5.15 (May 20, 2010)
+=======================================================
+
+   Fixes
+   -----
+   1. Problem: brcm_iscsiuio would echo packets off the wire
+
+      Cause:  Stale packets from the uIP stack could potentially
+              make it onto the wire causing a network flood
+
+      Change: Only place on the wire packets uIP intended to place
+              on the wire.  Drop all other packets.
+
+uIP v0.5.14 (May 18, 2010)
+=======================================================
+
+   Fixes
+   -----
+   1. Problem: brcm_iscsiuio would crash when offloading using a
+               bnx2x device /dev/mem could not be
+               opened, (ie. SE Linux enabled)
+
+      Cause:  /dev/mem could not be opened, (ie. SE Linux enabled)
+              and then the NIC would be improperly initialized.
+
+      Change: If /dev/mem is not able to be opened, then the device
+              is closed
+
+   2. Problem: brcm_iscsiuio would crash when brcm_iscsiuio is
+               being shutdown
+
+      Cause:  The NIC mutex was deferenced imporperly when the NIC
+              is being closed
+
+      Change: Take the NIC mutex lock only when the NIC is closed.
+
+uIP v0.5.13 (May 16, 2010)
+=======================================================
+
+   Fixes
+   -----
+   1. Problem: brcm_iscsiuio would crash with heavy traffic directed
+               at the iSCSI traffic
+
+      Cause:  Packets which are sized between 1006-1024 bytes would
+              crash brcm_iscsiuio because brcm_iscsiuio is not sized
+	      to handle such large packets
+
+      Change: Drop large packets, properly hold the NIC mutex lock
+              for the duration when NIC fields are being used.
+
+
+uIP v0.5.12 (May 13, 2010)
+=======================================================
+
+   Fixes
+   -----
+   1. Problem: brcm_iscsiuio could crash on when L2 interface is
+               ifdown'ed
+
+      Cause:  The local NIC pointer was not initialized properly
+              in the routine parse_iface()
+
+      Change: Properly initialize the NIC pointer
+
+   2. Problem: Documentation referred to older admin_client which
+               doesn't exist any more because brcm_iscsiuio uses
+	       the iscsid iface file
+
+      Change: Remove the stale references
+
+
+uIP v0.5.11 (May 11, 2010)
+=======================================================
+
+   Fixes
+   -----
+   1. Problem: brcm_iscsiuio could crash on invalid packet sizes
+
+      Cause:  The hardware BD could be a large value because of a
+              hardware error
+
+      Change: Limit the size of the packet dumped to the MTU size
+
+   Enhancements
+   ------------
+
+   1. Change: During the running of the configure script now
+              the script will check for ar and ranlib binaries
+
+
+uIP v0.5.10 (May 03, 2010)
+=======================================================
+
+   Fixes
+   -----
+   1. Problem: BCM57712 not recognized
+
+      Cause:  The PCI ID's in the bnx2x file were missing.
+
+      Change: Added proper BCM57712, BCM57712E, BCM57713, BCM57713E
+              PCI ID's
+
+   2. Problem: (CQ 47481) brcm_iscsiuio not installed in correct location
+
+      Cause:  Default install path for autoconf is /usr/local
+
+      Change: Change the default prefix to '/' so the brcm_iscsiuio
+              binary is installed to /sbin/
+
+   Enhancements
+   ------------
+
+   1. Change: Remove dependency on Yacc and Lex
+
+
+uIP v0.5.9 (April 28, 2010)
+=======================================================
+
+   Fixes
+   -----
+   1. Problem: bnx2x T6.0 driver would not login
+
+      Cause:  The bnx2x code was not using the T6.0 HSI offsets
+
+      Change: Determine to bnx2x driver version eariler to properly use the
+              T4.8 or T6.0 HSI
+
+   Enhancements
+   ------------
+
+   1. Change: Collapse all the various locks to use the NIC lock to shrink
+              memory footprint
+
+   2. Change: Consolidate upper layer checksumming code
+
+
+uIP v0.5.5 (March 02, 2010)
+=======================================================
+
+   Enhancements
+   ------------
+
+   1. Change: Add support for T6.0 bnx2x HSI and 57712.
+
+   2. Change: Initial support for IPv6
+
+uIP v0.5.8 (April 22, 2010)
+=======================================================
+
+   Enhancements
+   ------------
+
+   1. Change: Add support for T6.0 bnx2x HSI and 57712.
+
+   2. Change: Initial support for IPv6
+
+uIP v0.5.7 (March 17, 2010)
+=======================================================
+
+   Enhancements
+   ------------
+
+   1. Change: Add to documentation on discovering on a particular
+	      iface before logging in
+
+uIP v0.5.6 (Mar 05, 2009)
+=======================================================
+   Fixes
+   -----
+   1. Problem: bnx2x panic dump would be seen when sending
+               traffic to uIP
+
+      Cause: The TX producer index was not properly
+             incrementing when the wrapping occured
+
+      Change: Do not skip the last TX producer index like the
+              TX BD's
+
+      Impact: None.
+
+uIP v0.5.5 (March 02, 2010)
+=======================================================
+   Initial release
+
+   Enhancements
+   ------------
+
+   1. Change: Add to documentation on debugging/logging for uIP
+
+
+uIP v0.5.4 (Feb 22, 2010)
+=======================================================
+   Fixes
+   -----
+   1. Problem: Compile error where 'ETHERTYPE_VLAN' define
+               is missing
+
+      Cause: Certain distributions do not define 'ETHERTYPE_VLAN'
+             in the header file "net/ethernet.h".
+
+      Change: Added proper defines for ETHERTYPE_VLAN when necessary
+
+      Impact: None.
+
+
+uIP v0.5.3 (Feb 18, 2010)
+=======================================================
+   Fixes
+   -----
+   1. Problem: Using VLAN's on offloaded iSCSI connections
+
+      Cause: (CQ45983) VLAN tags were not being properly inserted
+             when sending the ARP request packets
+
+      Change: Added VLAN tags when sending ARP request packets
+
+      Impact: None.
+
+
+uIP v0.5.2 (Dec 10, 2009)
+=======================================================
+   Fixes
+   -----
+   1. Problem: Switching between 10G and 1G iSCSI offloaded
+               devices caused login connectivity problems
+
+      Cause: The NIC devices within uIP were not cleanup
+             properly.
+
+      Change: The NIC structure is not re-initialized and the
+              NIC thread is destroyed when the host network
+              interface is brought down.
+
+      Impact: None.
+
+
+uIP v0.5.1 (Dec 9, 2009)
+=======================================================
+   Fixes
+   -----
+   1. Problem: 10G devices behind PCI bridges would not collect
+
+      Cause: PCI bus:slot.func string was parsed incorrectly
+             because the bridge string was used
+
+      Change: Parse the proper PCI bus:slot.func string.
+
+      Impact: None.
+
+
+uIP v0.5.0b (Nov 24, 2009)
+=======================================================
+   Initial release
+
+   Enhancements
+   ------------
+
+   1. Change: Add Broadcom 10G iSCSI offload support
+
+      Impact: Linux
+

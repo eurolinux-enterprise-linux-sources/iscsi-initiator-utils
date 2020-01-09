@@ -1,0 +1,159 @@
+Broadcom iSCSI Userspace Tools
+Version 0.5.15
+May 20, 2010
+------------------------------------------------------
+
+This tools is to be used in conjunction with the Broadcom NetXtreme II Linux
+driver (Kernel module name: 'bnx2' and 'bnx2x'), Broadcom CNIC driver,
+and the Broadcom iSCSI driver (Kernel module name: 'bnx2i'). 
+This user space driver is used  in conjunction with the following
+Broadcom Network Controllers:
+  bnx2:  BCM5708, BCM5709 devices
+  bnx2x: BCM57710, BCM57711, BCM57711E, BCM57712, BCM57712E,
+  	 BCM57713, BCM57713E devices
+
+This utility will provide the ARP and DHCP functionality for the iSCSI offload.
+The communication to the driver is done via Userspace I/O (Kernel module name
+'uio').
+
+There is one component to this application:
+
+1.  'brcm_iscsiuio' - This is the daemon which aids in creating iSCSI offloaded
+                      connections.
+
+Dependencies:
+=======================================
+
+Linux Kernel Dependencies:
+1.  Broadcom CNIC driver (cnic)
+1.  Broadcom iSCSI offload driver (bnx2i)
+2.  Userspace I/O driver (uio)
+
+Directory Structure of this Package:
+=======================================
+
+<root>
+  |
+  +-doc (documentation directory: man pages)
+  |
+  +-src 
+     |
+     +- uip - the uIP stack
+     |
+     +- unix - brcm_iscsiuio source
+     
+
+
+Compiling / Installing
+=======================================
+
+1.  Please untar the tarball.
+2.  Run the configure script.  This will create the Makefiles and proper
+    header files needed for the build.
+3.  Run 'make'.  This will create the binary, 'brcm_iscsiuio'
+4.  Run 'make install' to place the binaries in their installed location.
+    (The default location is '/sbin')
+
+iscsid IFACE Configuration File:
+=======================================
+The network interface configuration files are driven by the iscsid iface
+files.  The configuration data is parsed by iscsid and passed to the uIP
+stack when the connection is established.
+
+One can use the following iscsiadm commands to create/set the configuration
+using the iface files:
+
+1.  Create the iface file:
+
+      iscsiadm -m iface -I <iface name> --op=new
+
+2.  Discover the targets via the new iface
+
+     iscsiadm -m discovery -t st -p <iSCSI target IP address> -I <iface name> 
+
+3.  Update the iface file:
+
+  To use a static IPv4 address:
+      iscsiadm -m iface -I <iface name> --op=update --name=iface.ipaddress --value=<static IPv4 address ie: 192.168.0.1>
+
+  To use a DHCP address:
+      iscsiadm -m iface -I <iface name> --op=update --name=iface.ipaddress --value=0.0.0.0
+
+  The following values are required.
+
+  To specify the bnx2i as the transport:
+      iscsiadm -m iface -I <iface name> --op=update --name=iface.transport_name --value=bnx2i
+
+  To specify the network interface name:
+      iscsiadm -m iface -I <iface name> --op=update --name=iface.net_ifacename --value=<network interface name>
+
+4.  Now all the settings should be set so that one could connect to their
+    desired iSCSI target.
+
+      iscsiadm -m node -p <iSCSI target IP address> -T <target name> -I <iface name> --login
+
+bnx2 Limitations:
+=======================================
+*  RX iSCSI ring:
+      *  default ring size is 3 entries
+      *  default buffer size is 0x400 bytes
+*  TX iSCSI ring:
+      *  default ring size of 1 entry
+      *  default buffer size is 0x400 bytes
+
+bnx2x Limitations:
+=======================================
+*  RX iSCSI ring:
+      *  default ring size is 15 entries
+      *  default buffer size is 0x400 bytes
+*  TX iSCSI ring:
+      *  default ring size of 1 entry
+      *  default buffer size is 0x400 bytes
+
+Other Limiations:
+
+Any packets larger then the buffer size will not be sent/received by the
+hardware and will be dropped.
+
+There is no IPv6 support.
+
+VLAN support:
+
+VLAN support is only supported when using static IP addresses.  Also, currently
+only 1 VLAN is supported.  Either non-VLAN offloaded traffic is allowed or
+VLAN offloaded traffic is allowed.  The current implementation does not support
+both at the same time.
+
+Debugging:
+=======================================
+
+The brcm_iscsiuio daemon will output messages to the log file,
+'/var/log/brcm-iscsi.log'.  These messages can be used to help debug any issues.
+
+A sample banner message:
+
+INFO  [Wed Feb 17 15:59:13 2010]Started BRCM iSCSI stack: Ver 0.5.2
+INFO  [Wed Feb 17 15:59:13 2010]Build date: Wed Feb 17 15:36:04 PST 2010
+INFO  [Wed Feb 17 15:59:13 2010]Debug mode enabled
+
+When debugging issues like the iscsid, the brcm_iscsiuio daemon can be run
+in the foreground and the maximum debugging level should be used.
+
+To place the daemon in foreground mode please pass the parameter '-f'
+To run the daemon in debug mode please pass the parameter  '-d <debug level>'
+
+where the following debug levels are defined:
+
+DEBUG         4 - Print all messages
+INFO          3 - Print messages needed to follow the uIP code (default)
+WARN          2 - Print warning messages
+ERROR         1 - Only print critical errors
+
+Note: The messages to the log file are not flushed unless debugging is enabled.
+
+Note:  If the daemon brcm_iscsiuio is running, one will not be able to
+       trample over the exisiting binary.  One might see the following message:
+
+       'cannot create regular file `/sbin/brcm_iscsiuio': Text file busy'
+
+       The solve this, please stop the iscsid service and then install.

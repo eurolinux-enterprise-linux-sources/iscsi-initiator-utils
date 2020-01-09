@@ -1,0 +1,244 @@
+From 5cc4e58eab0d8ee498de82a057c376fd376ba663 Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@redhat.com>
+Date: Fri, 5 Sep 2014 14:13:08 -0700
+Subject: [PATCH] [REVERT] ISCSIUIO: Fixed a pthread resc leak from excessive
+ session  recovery
+
+>A pthread resource leak was discovered in the ongoing pthread
+>creation code during the session recovery process.  These pthreads
+>were erroneously created as joinable instead of having the intended
+>detached attribute.
+
+This is racy when active threads are canceled in nic_remove without waiting for
+them to terminate, resulting in segfault or sigabrt in some stress tests.
+---
+ iscsiuio/RELEASE.TXT           | 12 ------------
+ iscsiuio/src/unix/iscsid_ipc.c | 26 +++++++++++++-------------
+ iscsiuio/src/unix/main.c       |  5 +----
+ iscsiuio/src/unix/nic.c        | 23 +++++++++++++++++++++--
+ iscsiuio/src/unix/nic_utils.c  |  5 +----
+ 5 files changed, 36 insertions(+), 35 deletions(-)
+
+diff --git a/iscsiuio/RELEASE.TXT b/iscsiuio/RELEASE.TXT
+index 48feedd..22628fd 100644
+--- a/iscsiuio/RELEASE.TXT
++++ b/iscsiuio/RELEASE.TXT
+@@ -10,18 +10,6 @@
+                Copyright (c) 2004 - 2013 Broadcom Corporation
+                            All rights reserved
+ 
+-uIP v0.7.10.2 (Feb 12, 2014)
+-=======================================================
+-   Fixes
+-   -----
+-   1. Problem: Cont00072504 - ifconfig shows allocation failure after
+-               up/down few hours with iSCSI + L2 traffic
+-      Cause:   A memory leak was discovered in the ongoing pthread creation
+-               destruction code during the connection recovery process
+-      Change:  Fixed the pthread creation code
+-      Impact:  All
+-
+-
+ uIP v0.7.8.2 (Dec 10, 2013)
+ =======================================================
+    Fixes
+diff --git a/iscsiuio/src/unix/iscsid_ipc.c b/iscsiuio/src/unix/iscsid_ipc.c
+index 0b9b18c..033308d 100644
+--- a/iscsiuio/src/unix/iscsid_ipc.c
++++ b/iscsiuio/src/unix/iscsid_ipc.c
+@@ -334,9 +334,9 @@ static int parse_iface(void *arg)
+ 	char ipv6_buf_str[INET6_ADDRSTRLEN];
+ 	int request_type = 0;
+ 	struct iface_rec *rec;
++	void *res;
+ 	struct iface_rec_decode ird;
+ 	struct in_addr src_match, dst_match;
+-	pthread_attr_t attr;
+ 
+ 	data = (iscsid_uip_broadcast_t *) arg;
+ 	rec = &data->u.iface_rec.rec;
+@@ -594,9 +594,7 @@ static int parse_iface(void *arg)
+ 
+ 	nic_iface->flags |= NIC_IFACE_PATHREQ_WAIT1;
+ 	if (nic->nl_process_thread == INVALID_THREAD) {
+-		pthread_attr_init(&attr);
+-		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+-		rc = pthread_create(&nic->nl_process_thread, &attr,
++		rc = pthread_create(&nic->nl_process_thread, NULL,
+ 				    nl_process_handle_thread, nic);
+ 		if (rc != 0) {
+ 			LOG_ERR(PFX "%s: Could not create NIC NL "
+@@ -747,16 +745,14 @@ enable_nic:
+ 	case NIC_STOPPED:
+ 		/* This thread will be thrown away when completed */
+ 		if (nic->enable_thread != INVALID_THREAD) {
+-			rc = pthread_cancel(nic->enable_thread);
++			rc = pthread_join(nic->enable_thread, &res);
+ 			if (rc != 0) {
+-				LOG_INFO(PFX "%s: failed to cancel enable NIC "
++				LOG_INFO(PFX "%s: failed joining enable NIC "
+ 					 "thread\n", nic->log_name);
+ 				goto eagain;
+ 			}
+ 		}
+-		pthread_attr_init(&attr);
+-		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+-		rc = pthread_create(&nic->enable_thread, &attr,
++		rc = pthread_create(&nic->enable_thread, NULL,
+ 				    enable_nic_thread, (void *)nic);
+ 		if (rc != 0)
+ 			LOG_WARN(PFX "%s: failed starting enable NIC thread\n",
+@@ -1005,12 +1001,9 @@ error:
+  */
+ int iscsid_start()
+ {
+-	pthread_attr_t attr;
+ 	int rc;
+ 
+-	pthread_attr_init(&attr);
+-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+-	rc = pthread_create(&iscsid_opts.thread, &attr, iscsid_loop, NULL);
++	rc = pthread_create(&iscsid_opts.thread, NULL, iscsid_loop, NULL);
+ 	if (rc != 0) {
+ 		LOG_ERR(PFX "Could not start iscsid listening thread rc=%d",
+ 			rc);
+@@ -1033,6 +1026,7 @@ error:
+ void iscsid_cleanup()
+ {
+ 	int rc;
++	void *res;
+ 
+ 	if (iscsid_opts.fd != INVALID_FD) {
+ 		rc = pthread_cancel(iscsid_opts.thread);
+@@ -1040,6 +1034,12 @@ void iscsid_cleanup()
+ 			LOG_ERR("Could not cancel iscsid listening thread: %s",
+ 				strerror(rc));
+ 		}
++
++		rc = pthread_join(iscsid_opts.thread, &res);
++		if (rc != 0) {
++			LOG_ERR("Could not wait for the iscsid listening "
++				"thread: %s", strerror(rc));
++		}
+ 	}
+ 
+ 	LOG_INFO(PFX "iscsid listening thread has shutdown");
+diff --git a/iscsiuio/src/unix/main.c b/iscsiuio/src/unix/main.c
+index e33db04..340e275 100644
+--- a/iscsiuio/src/unix/main.c
++++ b/iscsiuio/src/unix/main.c
+@@ -237,7 +237,6 @@ int main(int argc, char *argv[])
+ 	int fd;
+ 	int foreground = 0;
+ 	pid_t pid;
+-	pthread_attr_t attr;
+ 
+ 	/*  Record the start time for the user space daemon */
+ 	opt.start_time = time(NULL);
+@@ -367,9 +366,7 @@ int main(int argc, char *argv[])
+ 	rc = pthread_sigmask(SIG_SETMASK, &set, NULL);
+ 
+ 	/*  Spin off the signal handling thread */
+-	pthread_attr_init(&attr);
+-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+-	rc = pthread_create(&signal_thread, &attr, signal_handle_thread, NULL);
++	rc = pthread_create(&signal_thread, NULL, signal_handle_thread, NULL);
+ 	if (rc != 0)
+ 		LOG_ERR("Could not create signal handling thread");
+ 
+diff --git a/iscsiuio/src/unix/nic.c b/iscsiuio/src/unix/nic.c
+index 18e3007..7c3f4d5 100644
+--- a/iscsiuio/src/unix/nic.c
++++ b/iscsiuio/src/unix/nic.c
+@@ -450,6 +450,7 @@ int nic_remove(nic_t *nic)
+ 	int rc;
+ 	nic_t *prev, *current;
+ 	struct stat file_stat;
++	void *res;
+ 	nic_interface_t *nic_iface, *next_nic_iface, *vlan_iface;
+ 
+ 	pthread_mutex_lock(&nic->nic_mutex);
+@@ -470,6 +471,12 @@ int nic_remove(nic_t *nic)
+ 			LOG_DEBUG(PFX "%s: Couldn't send cancel to nic enable "
+ 				  "thread", nic->log_name);
+ 
++		LOG_DEBUG(PFX "%s: Waiting to join nic enable thread",
++			  nic->log_name);
++		rc = pthread_join(nic->enable_thread, &res);
++		if (rc != 0)
++			LOG_DEBUG(PFX "%s: Couldn't join to canceled enable "
++				  "nic thread", nic->log_name);
+ 		nic->enable_thread = INVALID_THREAD;
+ 		LOG_DEBUG(PFX "%s: nic enable thread cleaned", nic->log_name);
+ 	} else {
+@@ -485,6 +492,11 @@ int nic_remove(nic_t *nic)
+ 			LOG_DEBUG(PFX "%s: Couldn't send cancel to nic",
+ 				  nic->log_name);
+ 
++		LOG_DEBUG(PFX "%s: Waiting to join nic thread", nic->log_name);
++		rc = pthread_join(nic->thread, &res);
++		if (rc != 0)
++			LOG_DEBUG(PFX "%s: Couldn't join to canceled nic "
++				  "thread", nic->log_name);
+ 		nic->thread = INVALID_THREAD;
+ 		LOG_DEBUG(PFX "%s: nic thread cleaned", nic->log_name);
+ 	} else {
+@@ -499,6 +511,12 @@ int nic_remove(nic_t *nic)
+ 			LOG_DEBUG(PFX "%s: Couldn't send cancel to nic nl "
+ 				  "thread", nic->log_name);
+ 
++		LOG_DEBUG(PFX "%s: Waiting to join nic nl thread",
++			  nic->log_name);
++		rc = pthread_join(nic->nl_process_thread, &res);
++		if (rc != 0)
++			LOG_DEBUG(PFX "%s: Couldn't join to canceled nic nl "
++				  "thread", nic->log_name);
+ 		nic->nl_process_thread = INVALID_THREAD;
+ 		LOG_DEBUG(PFX "%s: nic nl thread cleaned", nic->log_name);
+ 	} else {
+@@ -1220,6 +1238,7 @@ static int do_acquisition(nic_t *nic, nic_interface_t *nic_iface,
+ {
+ 	struct in_addr addr;
+ 	struct in6_addr addr6;
++	void *res;
+ 	char buf[INET6_ADDRSTRLEN];
+ 	int rc = -1;
+ 
+@@ -1297,9 +1316,9 @@ static int do_acquisition(nic_t *nic, nic_interface_t *nic_iface,
+ 			if (nic->enable_thread == INVALID_THREAD)
+ 				goto dhcp_err;
+ 
+-			rc = pthread_cancel(nic->enable_thread);
++			rc = pthread_join(nic->enable_thread, &res);
+ 			if (rc != 0)
+-				LOG_ERR(PFX "%s: Couldn't cancel "
++				LOG_ERR(PFX "%s: Couldn't join to canceled "
+ 					"enable nic thread", nic->log_name);
+ dhcp_err:
+ 			pthread_mutex_lock(&nic->nic_mutex);
+diff --git a/iscsiuio/src/unix/nic_utils.c b/iscsiuio/src/unix/nic_utils.c
+index fee9a4b..2acd3c2 100644
+--- a/iscsiuio/src/unix/nic_utils.c
++++ b/iscsiuio/src/unix/nic_utils.c
+@@ -871,7 +871,6 @@ error:
+ 
+ void prepare_nic_thread(nic_t *nic)
+ {
+-	pthread_attr_t attr;
+ 	int rc;
+ 
+ 	pthread_mutex_lock(&nic->nic_mutex);
+@@ -882,9 +881,7 @@ void prepare_nic_thread(nic_t *nic)
+ 		LOG_INFO(PFX "%s: spinning up thread for nic", nic->log_name);
+ 
+ 		/*  Try to spin up the nic thread */
+-		pthread_attr_init(&attr);
+-		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+-		rc = pthread_create(&nic->thread, &attr, nic_loop, nic);
++		rc = pthread_create(&nic->thread, NULL, nic_loop, nic);
+ 		if (rc != 0) {
+ 			LOG_ERR(PFX "%s: Couldn't create thread for nic",
+ 				nic->log_name);
+-- 
+1.9.3
+

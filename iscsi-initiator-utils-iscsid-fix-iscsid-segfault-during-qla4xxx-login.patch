@@ -1,0 +1,43 @@
+From bc6380ddce06ae2ce9a5b4f2952879175ba47c06 Mon Sep 17 00:00:00 2001
+From: Mike Christie <michaelc@cs.wisc.edu>
+Date: Wed, 5 Sep 2012 16:18:16 -0500
+Subject: [PATCH 1/4] iscsid: fix iscsid segfault during qla4xxx login
+
+If the kernel sends multiple ISCSI_KEVENT_CONN_LOGIN_STATE
+events for the same login event iscsid will segault.
+
+When we get a conn error we will set the r_stage to reopen, then when
+session_conn_process_login handles the first login event we set the r_stage
+to R_STAGE_NO_CHANGE. But then it looks like if we get a second login event
+r_stage is no_change and session_conn_process_login will run again and
+call mgmt_ipc_write_rsp on a bad qtask.
+---
+ usr/initiator.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/usr/initiator.c b/usr/initiator.c
+index c9d792e..597e0ff 100644
+--- a/usr/initiator.c
++++ b/usr/initiator.c
+@@ -1041,7 +1041,7 @@ static void session_scan_host(struct iscsi_session *session, int hostno,
+ 		exit(0);
+ 	} else if (pid > 0) {
+ 		reap_inc();
+-		if (qtask) {
++		if (qtask && qtask->mgmt_ipc_fd >= 0) {
+ 			close(qtask->mgmt_ipc_fd);
+ 			free(qtask);
+ 		}
+@@ -1666,6 +1666,9 @@ static void session_conn_process_login(void *data)
+ 	if (state == ISCSI_CONN_STATE_FREE)
+ 		goto failed_login;
+ 
++	if (conn->state == ISCSI_CONN_STATE_LOGGED_IN)
++		return;
++
+ 	conn->state = ISCSI_CONN_STATE_LOGGED_IN;
+ 	/*
+ 	 * ok we were in_login and now we got the notification that we are
+-- 
+1.7.11.4
+

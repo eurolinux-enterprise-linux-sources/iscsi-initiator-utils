@@ -1,0 +1,41 @@
+From fe23748f3d0a5a6c99eb83c22035d12e00f23652 Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@redhat.com>
+Date: Tue, 13 Aug 2013 22:44:54 -0700
+Subject: [PATCH 1/1] Fix libiscsi regression caused by merging upstream code
+
+Buffer lengths in config structures changed, mismatch exposed incorrect
+use of strncpy.  Issue flagged by rpmdiff.
+---
+ libiscsi/libiscsi.c | 16 +++++++---------
+ 1 file changed, 7 insertions(+), 9 deletions(-)
+
+diff --git a/libiscsi/libiscsi.c b/libiscsi/libiscsi.c
+index 82867ec..523d3d3 100644
+--- a/libiscsi/libiscsi.c
++++ b/libiscsi/libiscsi.c
+@@ -734,15 +734,13 @@ int libiscsi_get_firmware_network_config(
+ 		return ENODEV;
+ 
+ 	config->dhcp = strlen(fw_entry.dhcp) ? 1 : 0;
+-	strncpy(config->iface_name, fw_entry.iface, sizeof fw_entry.iface);
+-	strncpy(config->mac_address, fw_entry.mac, sizeof fw_entry.mac);
+-	strncpy(config->ip_address, fw_entry.ipaddr, sizeof fw_entry.ipaddr);
+-	strncpy(config->netmask, fw_entry.mask, sizeof fw_entry.mask);
+-	strncpy(config->gateway, fw_entry.gateway, sizeof fw_entry.gateway);
+-	strncpy(config->primary_dns, fw_entry.primary_dns,
+-		sizeof fw_entry.primary_dns);
+-	strncpy(config->secondary_dns, fw_entry.secondary_dns,
+-		sizeof fw_entry.secondary_dns);
++	strncpy(config->iface_name, fw_entry.iface, LIBISCSI_VALUE_MAXLEN);
++	strncpy(config->mac_address, fw_entry.mac, LIBISCSI_VALUE_MAXLEN);
++	strncpy(config->ip_address, fw_entry.ipaddr, LIBISCSI_VALUE_MAXLEN);
++	strncpy(config->netmask, fw_entry.mask, LIBISCSI_VALUE_MAXLEN);
++	strncpy(config->gateway, fw_entry.gateway, LIBISCSI_VALUE_MAXLEN);
++	strncpy(config->primary_dns, fw_entry.primary_dns, LIBISCSI_VALUE_MAXLEN);
++	strncpy(config->secondary_dns, fw_entry.secondary_dns, LIBISCSI_VALUE_MAXLEN);
+ 	return 0;
+ }
+ 
+-- 
+1.8.1.4
+

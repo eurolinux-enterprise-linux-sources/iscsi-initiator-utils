@@ -1,0 +1,343 @@
+From ec7c744cc412582ed3eff293021bf50447be8002 Mon Sep 17 00:00:00 2001
+From: Eddie Wai <eddie.wai@broadcom.com>
+Date: Thu, 27 Sep 2012 13:57:12 -0700
+Subject: [PATCH 3/6] bnx2i vlan boot support
+
+-- This is a combination of 4 commits.
+-- The first commit's message is:
+ISCSID: Passing more net params from ibft to iface
+
+Added the passing of the vlan_id, subnet_mask, and gateway attributes
+from the ibft context to the iface struct for the connection request.
+
+Signed-off-by: Eddie Wai <eddie.wai@broadcom.com>
+
+-- This is the 2nd commit message:
+
+ISCSISTART: Saved ibft boot info to the session sysfs
+
+Three new session sysfs parameters are introduced:
+boot_root   - holds the ibft boot root folder name
+boot_nic    - holds the ibft boot ethernetN name
+boot_target - holds the ibft boot targetN name
+
+This patch copies over the /sys/firmware/<boot_root>/ethernetN/targetN info
+from the boot context to the node_rec.
+
+Signed-off-by: Eddie Wai <eddie.wai@broadcom.com>
+
+-- This is the 3rd commit message:
+
+ISCSID: Added the extraction of the session boot info
+
+This patch does the work to extract the corresponding
+<boot_root>->ethernetN net params as specified from the kernel
+session boot_nic sysfs entry based on the transport param
+use_boot_info.
+
+This is only populated for iscsi_tcp and bnx2i.
+
+Signed-off-by: Eddie Wai <eddie.wai@broadcom.com>
+
+-- This is the 4th commit message:
+
+ISCSID: Added iface content override fix
+
+Patch provided by Mike Christie.
+
+This patch fixes the unconditional overwrite of the iface struct
+even when the corresponding iface info from the node config was
+found and extracted.
+
+Signed-off-by: Eddie Wai <eddie.wai@broadcom.com>
+---
+ include/fw_context.h               |  3 +++
+ include/iscsi_if.h                 |  4 ++++
+ include/iscsi_proto.h              |  1 +
+ usr/config.h                       |  3 +++
+ usr/idbm.c                         |  6 ++++++
+ usr/iface.c                        |  5 +++++
+ usr/initiator_common.c             | 14 ++++++++++++-
+ usr/iscsi_sysfs.c                  | 40 ++++++++++++++++++++++++++++++++++++++
+ usr/iscsid.c                       |  8 +++-----
+ usr/transport.c                    |  1 +
+ usr/transport.h                    |  1 +
+ utils/fwparam_ibft/fwparam_sysfs.c |  8 ++++++++
+ 12 files changed, 88 insertions(+), 6 deletions(-)
+
+diff --git a/include/fw_context.h b/include/fw_context.h
+index 1640859..6563d68 100644
+--- a/include/fw_context.h
++++ b/include/fw_context.h
+@@ -30,6 +30,9 @@
+ 
+ struct boot_context {
+ 	struct list_head list;
++	char boot_root[BOOT_NAME_MAXLEN];
++	char boot_nic[BOOT_NAME_MAXLEN];
++	char boot_target[BOOT_NAME_MAXLEN];
+ 
+ 	/* target settings */
+ 	int target_port;
+diff --git a/include/iscsi_if.h b/include/iscsi_if.h
+index dad9fd8..7a8ee9a 100644
+--- a/include/iscsi_if.h
++++ b/include/iscsi_if.h
+@@ -460,6 +460,10 @@ enum iscsi_param {
+ 
+ 	ISCSI_PARAM_TGT_RESET_TMO,
+ 	ISCSI_PARAM_TARGET_ALIAS,
++
++	ISCSI_PARAM_BOOT_ROOT,
++	ISCSI_PARAM_BOOT_NIC,
++	ISCSI_PARAM_BOOT_TARGET,
+ 	/* must always be last */
+ 	ISCSI_PARAM_MAX,
+ };
+diff --git a/include/iscsi_proto.h b/include/iscsi_proto.h
+index 1c69feb..56f757b 100644
+--- a/include/iscsi_proto.h
++++ b/include/iscsi_proto.h
+@@ -619,6 +619,7 @@ struct iscsi_reject {
+ #define KEY_MAXLEN		64
+ #define VALUE_MAXLEN		255
+ #define TARGET_NAME_MAXLEN	VALUE_MAXLEN
++#define BOOT_NAME_MAXLEN	256
+ 
+ #define ISCSI_DEF_MAX_RECV_SEG_LEN		8192
+ #define ISCSI_MIN_MAX_RECV_SEG_LEN		512
+diff --git a/usr/config.h b/usr/config.h
+index 998caff..d457bdd 100644
+--- a/usr/config.h
++++ b/usr/config.h
+@@ -201,6 +201,9 @@ typedef struct session_rec {
+ 	 * allowed to be initiated on this record
+ 	 */
+ 	unsigned char                           multiple;
++	char					boot_root[BOOT_NAME_MAXLEN];
++	char					boot_nic[BOOT_NAME_MAXLEN];
++	char					boot_target[BOOT_NAME_MAXLEN];
+ } session_rec_t;
+ 
+ #define ISCSI_TRANSPORT_NAME_MAXLEN 16
+diff --git a/usr/idbm.c b/usr/idbm.c
+index c20f7d9..6ed56c6 100644
+--- a/usr/idbm.c
++++ b/usr/idbm.c
+@@ -2573,6 +2573,12 @@ struct node_rec *idbm_create_rec_from_boot_context(struct boot_context *context)
+ 				strlen((char *)context->chap_password);
+ 	rec->session.auth.password_in_length =
+ 				strlen((char *)context->chap_password_in);
++	strlcpy(rec->session.boot_root, context->boot_root,
++		sizeof(context->boot_root));
++	strlcpy(rec->session.boot_nic, context->boot_nic,
++		sizeof(context->boot_nic));
++	strlcpy(rec->session.boot_target, context->boot_target,
++		sizeof(context->boot_target));
+ 
+ 	iface_setup_from_boot_context(&rec->iface, context);
+ 
+diff --git a/usr/iface.c b/usr/iface.c
+index 0f6b6d1..29b46a2 100644
+--- a/usr/iface.c
++++ b/usr/iface.c
+@@ -956,6 +956,11 @@ int iface_setup_from_boot_context(struct iface_rec *iface,
+ 		sizeof(iface->hwaddress));
+ 	strlcpy(iface->ipaddress, context->ipaddr,
+ 		sizeof(iface->ipaddress));
++	iface->vlan_id = atoi(context->vlan);
++	strlcpy(iface->subnet_mask, context->mask,
++		sizeof(iface->subnet_mask));
++	strlcpy(iface->gateway, context->gateway,
++		sizeof(iface->gateway));
+ 	log_debug(1, "iface " iface_fmt "\n", iface_str(iface));
+ 	return 1;
+ }
+diff --git a/usr/initiator_common.c b/usr/initiator_common.c
+index dd32fe4..3368b88 100644
+--- a/usr/initiator_common.c
++++ b/usr/initiator_common.c
+@@ -324,7 +324,7 @@ int iscsi_host_set_params(struct iscsi_session *session)
+ 	return 0;
+ }
+ 
+-#define MAX_SESSION_PARAMS 32
++#define MAX_SESSION_PARAMS 35
+ 
+ int iscsi_session_set_params(struct iscsi_conn *conn)
+ {
+@@ -496,6 +496,18 @@ int iscsi_session_set_params(struct iscsi_conn *conn)
+ 			.param = ISCSI_PARAM_INITIATOR_NAME,
+ 			.value = session->initiator_name,
+ 			.type = ISCSI_STRING,
++		}, {
++			.param = ISCSI_PARAM_BOOT_ROOT,
++			.value = session->nrec.session.boot_root,
++			.type = ISCSI_STRING,
++		}, {
++			.param = ISCSI_PARAM_BOOT_NIC,
++			.value = session->nrec.session.boot_nic,
++			.type = ISCSI_STRING,
++		}, {
++			.param = ISCSI_PARAM_BOOT_TARGET,
++			.value = session->nrec.session.boot_target,
++			.type = ISCSI_STRING,
+ 		},
+ 	};
+ 
+diff --git a/usr/iscsi_sysfs.c b/usr/iscsi_sysfs.c
+index 123dde3..911b365 100644
+--- a/usr/iscsi_sysfs.c
++++ b/usr/iscsi_sysfs.c
+@@ -439,6 +439,43 @@ uint32_t iscsi_sysfs_get_host_no_from_hwinfo(struct iface_rec *iface, int *rc)
+ 	return host_no;
+ }
+ 
++static int iscsi_sysfs_read_boot(struct iface_rec *iface, char *session)
++{
++	char boot_root[BOOT_NAME_MAXLEN], boot_nic[BOOT_NAME_MAXLEN];
++	char boot_name[BOOT_NAME_MAXLEN], boot_content[BOOT_NAME_MAXLEN];
++
++	/* Extract boot info */
++	strlcpy(boot_name, "boot_target", sizeof(boot_name));
++	if (sysfs_get_str(session, ISCSI_SESSION_SUBSYS, boot_name,
++			  boot_content, BOOT_NAME_MAXLEN))
++		return -1;
++	strlcpy(boot_name, "boot_nic", sizeof(boot_name));
++	if (sysfs_get_str(session, ISCSI_SESSION_SUBSYS, boot_name, boot_nic,
++			  BOOT_NAME_MAXLEN))
++		return -1;
++	strlcpy(boot_name, "boot_root", sizeof(boot_name));
++	if (sysfs_get_str(session, ISCSI_SESSION_SUBSYS, boot_name, boot_root,
++			  BOOT_NAME_MAXLEN))
++		return -1;
++
++	/* If all boot_root/boot_target/boot_nic exist, then extract the
++	   info from the boot nic */
++	if (sysfs_get_str(boot_nic, boot_root, "vlan", boot_content,
++			  BOOT_NAME_MAXLEN))
++		log_debug(5, "could not read %s/%s/vlan", boot_root, boot_nic);
++	else
++		iface->vlan_id = atoi(boot_content);
++
++	if (sysfs_get_str(boot_nic, boot_root, "subnet-mask",
++			  iface->subnet_mask, NI_MAXHOST))
++		log_debug(5, "could not read %s/%s/subnet", boot_root,
++			  boot_nic);
++
++	log_debug(5, "sysfs read boot returns %s/%s/ vlan = %d subnet = %s",
++		  boot_root, boot_nic, iface->vlan_id, iface->subnet_mask);
++	return 0;
++}
++
+ /*
+  * Read in iface settings based on host and session values. If
+  * session is not passed in, then the ifacename will not be set. And
+@@ -567,6 +604,9 @@ static int iscsi_sysfs_read_iface(struct iface_rec *iface, int host_no,
+ 		}
+ 	}
+ 
++	if (t->template->use_boot_info && session)
++		iscsi_sysfs_read_boot(iface, session);
++
+ 	if (!iface_kern_id)
+ 		goto done;
+ 
+diff --git a/usr/iscsid.c b/usr/iscsid.c
+index b4bb65b..b912b58 100644
+--- a/usr/iscsid.c
++++ b/usr/iscsid.c
+@@ -111,9 +111,7 @@ setup_rec_from_negotiated_values(node_rec_t *rec, struct session_info *info)
+ 	strlcpy(rec->name, info->targetname, TARGET_NAME_MAXLEN);
+ 	rec->conn[0].port = info->persistent_port;
+ 	strlcpy(rec->conn[0].address, info->persistent_address, NI_MAXHOST);
+-	memcpy(&rec->iface, &info->iface, sizeof(struct iface_rec));
+ 	rec->tpgt = info->tpgt;
+-	iface_copy(&rec->iface, &info->iface);
+ 
+ 	iscsi_sysfs_get_negotiated_session_conf(info->sid, &session_conf);
+ 	iscsi_sysfs_get_negotiated_conn_conf(info->sid, &conn_conf);
+@@ -238,6 +236,7 @@ static int sync_session(void *data, struct session_info *info)
+ 		log_warning("Could not read data from db. Using default and "
+ 			    "currently negotiated values\n");
+ 		setup_rec_from_negotiated_values(&rec, info);
++		iface_copy(&rec.iface, &info->iface);
+ 	} else {
+ 		/*
+ 		 * we have a valid record and iface so lets merge
+@@ -251,13 +250,12 @@ static int sync_session(void *data, struct session_info *info)
+ 		memset(&sysfsrec, 0, sizeof(node_rec_t));
+ 		setup_rec_from_negotiated_values(&sysfsrec, info);
+ 		/*
+-		 * target, portal and iface name values have to be the same
++		 * target, portal and iface values have to be the same
+ 		 * or we would not have found the record, so just copy
+-		 * CHAP and iface settings.
++		 * CHAP settings.
+ 		 */
+ 		memcpy(&rec.session.auth, &sysfsrec.session.auth,
+ 		      sizeof(struct iscsi_auth_config));
+-		memcpy(&rec.iface, &info->iface, sizeof(rec.iface));
+ 	}
+ 
+ 	/* multiple drivers could be connected to the same portal */
+diff --git a/usr/transport.c b/usr/transport.c
+index 10212af..64f3353 100644
+--- a/usr/transport.c
++++ b/usr/transport.c
+@@ -77,6 +77,7 @@ struct iscsi_transport_template cxgb4i = {
+ struct iscsi_transport_template bnx2i = {
+ 	.name		= "bnx2i",
+ 	.set_host_ip	= 1,
++	.use_boot_info	= 1,
+ 	.ep_connect	= ktransport_ep_connect,
+ 	.ep_poll	= ktransport_ep_poll,
+ 	.ep_disconnect	= ktransport_ep_disconnect,
+diff --git a/usr/transport.h b/usr/transport.h
+index 5dcf872..388e4b1 100644
+--- a/usr/transport.h
++++ b/usr/transport.h
+@@ -31,6 +31,7 @@ struct iscsi_transport_template {
+ 	 * the host's ip address.
+ 	 */
+ 	uint8_t set_host_ip;
++	uint8_t use_boot_info;
+ 	int (*ep_connect) (struct iscsi_conn *conn, int non_blocking);
+ 	int (*ep_poll) (struct iscsi_conn *conn, int timeout_ms);
+ 	void (*ep_disconnect) (struct iscsi_conn *conn);
+diff --git a/utils/fwparam_ibft/fwparam_sysfs.c b/utils/fwparam_ibft/fwparam_sysfs.c
+index 3997363..2f37b59 100644
+--- a/utils/fwparam_ibft/fwparam_sysfs.c
++++ b/utils/fwparam_ibft/fwparam_sysfs.c
+@@ -200,6 +200,9 @@ static int fill_nic_context(char *subsys, char *id,
+ 		strlcpy(context->scsi_host_name, subsys,
+ 			sizeof(context->scsi_host_name));
+ 
++	memset(&context->boot_nic, 0, sizeof(context->boot_nic));
++	snprintf(context->boot_nic, sizeof(context->boot_nic), "%s", id);
++
+ 	sysfs_get_str(id, subsys, "ip-addr", context->ipaddr,
+ 		      sizeof(context->ipaddr));
+ 	sysfs_get_str(id, subsys, "vlan", context->vlan,
+@@ -224,6 +227,8 @@ static void fill_initiator_context(char *subsys, struct boot_context *context)
+ 		      sizeof(context->initiatorname));
+ 	sysfs_get_str("initiator", subsys, "isid", context->isid,
+ 		      sizeof(context->isid));
++
++	strlcpy(context->boot_root, subsys, sizeof(context->boot_root));
+ }
+ static int fill_tgt_context(char *subsys, char *id,
+ 			    struct boot_context *context)
+@@ -240,6 +245,9 @@ static int fill_tgt_context(char *subsys, char *id,
+ 	if (rc)
+ 		return rc;
+ 
++	memset(&context->boot_target, 0, sizeof(context->boot_target));
++	snprintf(context->boot_target, sizeof(context->boot_target), "%s", id);
++
+ 	/*
+ 	 * We can live without the rest of they do not exist. If we
+ 	 * failed to get them we will figure it out when we login.
+-- 
+1.8.1.4
+

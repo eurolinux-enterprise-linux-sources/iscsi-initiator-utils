@@ -1,0 +1,1694 @@
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/include/iscsi_if.h open-iscsi-2.0-872-rc4-bnx2i.work/include/iscsi_if.h
+--- open-iscsi-2.0-872-rc4-bnx2i/include/iscsi_if.h	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/include/iscsi_if.h	2012-04-05 16:04:06.000000000 -0500
+@@ -270,7 +270,8 @@ struct iscsi_uevent {
+ 		} host_event;
+ 		struct msg_ping_comp {
+ 			uint32_t	host_no;
+-			uint32_t	status;
++			uint32_t	status; /* enum
++						 * iscsi_ping_status_code */
+ 			uint32_t	pid;	/* unique ping id associated
+ 						   with each ping request */
+ 			uint32_t	data_size;
+@@ -515,6 +516,20 @@ enum iscsi_host_param {
+ #define ISCSI_HOST_NETDEV_NAME		(1ULL << ISCSI_HOST_PARAM_NETDEV_NAME)
+ #define ISCSI_HOST_IPADDRESS		(1ULL << ISCSI_HOST_PARAM_IPADDRESS)
+ 
++/* iSCSI PING status/error code */
++enum iscsi_ping_status_code {
++	ISCSI_PING_SUCCESS			= 0,
++	ISCSI_PING_FW_DISABLED			= 0x1,
++	ISCSI_PING_IPADDR_INVALID		= 0x2,
++	ISCSI_PING_LINKLOCAL_IPV6_ADDR_INVALID	= 0x3,
++	ISCSI_PING_TIMEOUT			= 0x4,
++	ISCSI_PING_INVALID_DEST_ADDR		= 0x5,
++	ISCSI_PING_OVERSIZE_PACKET		= 0x6,
++	ISCSI_PING_ICMP_ERROR			= 0x7,
++	ISCSI_PING_MAX_REQ_EXCEEDED		= 0x8,
++	ISCSI_PING_NO_ARP_RECEIVED		= 0x9,
++};
++
+ #define iscsi_ptr(_handle) ((void*)(unsigned long)_handle)
+ #define iscsi_handle(_ptr) ((uint64_t)(unsigned long)_ptr)
+ 
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/include/iscsi_net_util.h open-iscsi-2.0-872-rc4-bnx2i.work/include/iscsi_net_util.h
+--- open-iscsi-2.0-872-rc4-bnx2i/include/iscsi_net_util.h	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/include/iscsi_net_util.h	2012-04-05 16:04:06.000000000 -0500
+@@ -7,5 +7,6 @@ extern int net_get_transport_name_from_n
+ extern int net_get_netdev_from_hwaddress(char *hwaddress, char *netdev);
+ extern int net_setup_netdev(char *netdev, char *local_ip, char *mask,
+ 			    char *gateway, char *remote_ip, int needs_bringup);
++extern int net_ifup_netdev(char *netdev);
+ 
+ #endif
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/libiscsi/libiscsi.c open-iscsi-2.0-872-rc4-bnx2i.work/libiscsi/libiscsi.c
+--- open-iscsi-2.0-872-rc4-bnx2i/libiscsi/libiscsi.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/libiscsi/libiscsi.c	2012-04-05 16:04:06.000000000 -0500
+@@ -626,12 +626,15 @@ int libiscsi_node_set_parameter(struct l
+ 	const char *parameter, const char *value)
+ {
+ 	int nr_found = 0, rc;
+-	struct db_set_param set_param = {
+-		.name = (char *)parameter,
+-		.value = (char *)value,
+-	};
++	LIST_HEAD(param_list);
++	struct user_param param;
+ 
+-	CHECK(idbm_for_each_iface(&nr_found, &set_param, idbm_node_set_param,
++	INIT_LIST_HEAD(&param.list);
++	param.name = (char *)parameter;
++	param.value = (char *)value;
++	list_add_tail(&param.list, &param_list);
++
++	CHECK(idbm_for_each_iface(&nr_found, &param_list, idbm_node_set_param,
+ 		(char *)node->name, node->tpgt,
+ 		(char *)node->address, node->port))
+ 	if (nr_found == 0) {
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/config.h open-iscsi-2.0-872-rc4-bnx2i.work/usr/config.h
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/config.h	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/config.h	2012-04-05 16:04:06.000000000 -0500
+@@ -229,6 +229,8 @@ typedef struct iface_rec {
+ 							   * 1 = enable */
+ 	uint16_t		mtu;
+ 	uint16_t		port;
++	char			port_state[ISCSI_MAX_STR_LEN];
++	char			port_speed[ISCSI_MAX_STR_LEN];
+ 	/*
+ 	 * TODO: we may have to make this bigger and interconnect
+ 	 * specific for infinniband 
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/discovery.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/discovery.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/discovery.c	2012-04-05 16:03:05.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/discovery.c	2012-04-05 16:04:20.000000000 -0500
+@@ -849,7 +849,7 @@ iscsi_alloc_session(struct iscsi_sendtar
+ 	session->isid[4] = 0;
+ 	session->isid[5] = 0;
+ 
+-	if (iface && strlen(iface->iname)) {
++	if (strlen(iface->iname)) {
+ 		strcpy(initiator_name, iface->iname);
+ 		/* MNC TODO add iface alias */
+ 	} else {
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/host.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/host.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/host.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/host.c	2012-04-05 16:04:06.000000000 -0500
+@@ -174,6 +174,16 @@ static int print_host_iface(void *data,
+ 			       iface->ipv6_router);
+ 	}
+ 
++	if (!strlen(iface->port_state))
++		printf("%sPort State: %s\n", prefix, UNKNOWN_VALUE);
++	else
++		printf("%sPort State: %s\n", prefix, iface->port_state);
++
++	if (!strlen(iface->port_speed))
++		printf("%sPort Speed: %s\n", prefix, UNKNOWN_VALUE);
++	else
++		printf("%sPort Speed: %s\n", prefix, iface->port_speed);
++
+ 	if (!iface->port)
+ 		printf("%sPort: %s\n", prefix, UNKNOWN_VALUE);
+ 	else
+@@ -285,6 +295,7 @@ int host_info_print(int info_level, uint
+ 			break;
+ 		}
+ 
++		transport_probe_for_offload();
+ 		err = iscsi_sysfs_for_each_host(&flags, &num_found,
+ 						host_info_print_tree);
+ 		break;
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/idbm.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/idbm.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/idbm.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/idbm.c	2012-04-05 16:04:06.000000000 -0500
+@@ -608,6 +608,7 @@ setup_passwd_len:
+ 	for (i=0; i<MAX_KEYS; i++) {
+ 		if (!strcmp(name, info[i].name)) {
+ 			int j;
++
+ 			log_debug(7, "updated '%s', '%s' => '%s'", name,
+ 				  info[i].value, value);
+ 			/* parse recinfo by type */
+@@ -2358,70 +2359,86 @@ idbm_slp_defaults(struct iscsi_slp_confi
+ 	       sizeof(struct iscsi_slp_config));
+ }
+ 
+-int idbm_parse_param(char *param, struct node_rec *rec)
++struct user_param *idbm_alloc_user_param(char *name, char *value)
+ {
+-	char *name, *value;
+-	recinfo_t *info;
+-	int rc;
++	struct user_param *param;
+ 
+-	name = param;
++	param = calloc(1, sizeof(*param));
++	if (!param)
++		return NULL;
+ 
+-	value = strchr(param, '=');
+-	if (!value) {
+-		log_error("Invalid --param %s. Missing setting.\n", param);
+-		return ISCSI_ERR_INVAL;
+-	}
+-	*value = '\0';
+-	value++;
++	INIT_LIST_HEAD(&param->list);
+ 
+-	info = idbm_recinfo_alloc(MAX_KEYS);
+-	if (!info) {
+-		log_error("Could not allocate memory to setup params.\n");
+-		return ISCSI_ERR_NOMEM;
+-	}
++	param->name = strdup(name);
++	if (!param->name)
++		goto free_param;
+ 
+-	idbm_recinfo_node(rec, info);
++	param->value = strdup(value);
++	if (!param->value)
++		goto free_name;
+ 
+-	rc = idbm_rec_update_param(info, name, value, 0);
+-	if (rc)
+-		log_error("Could not set %s to %s. Check that %s is a "
+-			  "valid parameter.\n", name, value, name);
+-	free(info);
+-	return rc;
++	return param;
++
++free_name:
++	free(param->name);
++free_param:
++	free(param);
++	return NULL;
+ }
+ 
+-int idbm_node_set_param(void *data, node_rec_t *rec)
++int idbm_node_set_rec_from_param(struct list_head *params, node_rec_t *rec,
++				 int verify)
+ {
+-	struct db_set_param *param = data;
++	struct user_param *param;
+ 	recinfo_t *info;
+ 	int rc = 0;
+ 
++	if (list_empty(params))
++		return 0;
++
+ 	info = idbm_recinfo_alloc(MAX_KEYS);
+ 	if (!info)
+ 		return ISCSI_ERR_NOMEM;
+ 
+ 	idbm_recinfo_node(rec, info);
+ 
+-	rc = idbm_verify_param(info, param->name);
+-	if (rc)
+-		goto free_info;
+-
+-	rc = idbm_rec_update_param(info, param->name, param->value, 0);
+-	if (rc)
+-		goto free_info;
++	if (verify) {
++		list_for_each_entry(param, params, list) {
++			rc = idbm_verify_param(info, param->name);
++			if (rc)
++				goto free_info;
++		}
++	}
+ 
+-	rc = idbm_rec_write(rec);
+-	if (rc)
+-		goto free_info;
++	list_for_each_entry(param, params, list) {
++		rc = idbm_rec_update_param(info, param->name, param->value, 0);
++		if (rc) {
++			if (rc == ISCSI_ERR_INVAL)
++				log_error("Unknown parameter %s.", param->name);
++			goto free_info;
++		}
++	}
+ 
+ free_info:
+ 	free(info);
+ 	return rc;
+ }
+ 
++int idbm_node_set_param(void *data, node_rec_t *rec)
++{
++	int rc;
++
++	rc = idbm_node_set_rec_from_param(data, rec, 1);
++	if (rc)
++		return rc;
++
++	return idbm_rec_write(rec);
++}
++
+ int idbm_discovery_set_param(void *data, discovery_rec_t *rec)
+ {
+-	struct db_set_param *param = data;
++	struct list_head *params = data;
++	struct user_param *param;
+ 	recinfo_t *info;
+ 	int rc = 0;
+ 
+@@ -2431,13 +2448,17 @@ int idbm_discovery_set_param(void *data,
+ 
+ 	idbm_recinfo_discovery((discovery_rec_t *)rec, info);
+ 
+-	rc = idbm_verify_param(info, param->name);
+-	if (rc)
+-		goto free_info;
++	list_for_each_entry(param, params, list) {
++		rc = idbm_verify_param(info, param->name);
++		if (rc)
++			goto free_info;
++	}
+ 
+-	rc = idbm_rec_update_param(info, param->name, param->value, 0);
+-	if (rc)
+-		goto free_info;
++	list_for_each_entry(param, params, list) {
++		rc = idbm_rec_update_param(info, param->name, param->value, 0);
++		if (rc)
++			goto free_info;
++	}
+ 
+ 	rc = idbm_discovery_write((discovery_rec_t *)rec);
+ 	if (rc)
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/idbm.h open-iscsi-2.0-872-rc4-bnx2i.work/usr/idbm.h
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/idbm.h	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/idbm.h	2012-04-05 16:04:06.000000000 -0500
+@@ -26,6 +26,7 @@
+ #include <sys/types.h>
+ #include "initiator.h"
+ #include "config.h"
++#include "list.h"
+ 
+ #define ISCSIVAR		"/var/lib/iscsi/"
+ 
+@@ -82,7 +83,9 @@ typedef struct idbm {
+ 	discovery_rec_t	drec_isns;
+ 	recinfo_t	dinfo_isns[MAX_KEYS];
+ } idbm_t;
+-struct db_set_param {
++
++struct user_param {
++	struct list_head list;
+ 	char *name;
+ 	char *value;
+ };
+@@ -145,9 +148,11 @@ extern int idbm_discovery_read(discovery
+ extern int idbm_rec_read(node_rec_t *out_rec, char *target_name,
+ 			 int tpgt, char *addr, int port,
+ 			 struct iface_rec *iface);
+-extern int idbm_parse_param(char *param, struct node_rec *rec);
++extern int idbm_node_set_rec_from_param(struct list_head *params,
++					node_rec_t *rec, int verify);
+ extern int idbm_node_set_param(void *data, node_rec_t *rec);
+ extern int idbm_discovery_set_param(void *data, discovery_rec_t *rec);
++struct user_param *idbm_alloc_user_param(char *name, char *value);
+ extern void idbm_node_setup_defaults(node_rec_t *rec);
+ extern struct node_rec *idbm_find_rec_in_list(struct list_head *rec_list,
+ 					      char *targetname, char *addr,
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iface.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/iface.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iface.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iface.c	2012-04-05 16:04:06.000000000 -0500
+@@ -169,7 +169,7 @@ free_conf:
+ int iface_conf_read(struct iface_rec *iface)
+ {
+ 	struct iface_rec *def_iface;
+-	int rc;
++	int rc, retry = 0;
+ 
+ 	def_iface = iface_match_default(iface);
+ 	if (def_iface) {
+@@ -197,12 +197,24 @@ int iface_conf_read(struct iface_rec *if
+ 		return 0;
+ 	}
+ 
++retry_read:
+ 	rc = idbm_lock();
+ 	if (rc)
+ 		return rc;
+ 
+ 	rc = __iface_conf_read(iface);
+ 	idbm_unlock();
++
++	/*
++	 * cmd was run before running -m iface, so force def bindings
++	 * creation to see if that was the one requested
++	 */
++	if (retry < 1 && rc == ISCSI_ERR_IDBM) {
++		iface_setup_host_bindings();
++		retry++;
++		goto retry_read;
++	}
++
+ 	return rc;
+ }
+ 
+@@ -277,11 +289,11 @@ free_conf:
+ 	return rc;
+ }
+ 
+-int iface_conf_update(struct db_set_param *param,
+-		       struct iface_rec *iface)
++int iface_conf_update(struct list_head *params, struct iface_rec *iface)
+ {
+ 	struct iface_rec *def_iface;
+ 	recinfo_t *info;
++	struct user_param *param;
+ 	int rc = 0;
+ 
+ 	def_iface = iface_match_default(iface);
+@@ -296,13 +308,18 @@ int iface_conf_update(struct db_set_para
+ 		return ISCSI_ERR_NOMEM;
+ 
+ 	idbm_recinfo_iface(iface, info);
+-	rc = idbm_verify_param(info, param->name);
+-	if (rc)
+-		goto free_info;
+ 
+-	rc = idbm_rec_update_param(info, param->name, param->value, 0);
+-	if (rc)
+-		goto free_info;
++	list_for_each_entry(param, params, list) {
++		rc = idbm_verify_param(info, param->name);
++		if (rc)
++			goto free_info;
++	}
++
++	list_for_each_entry(param, params, list) {
++		rc = idbm_rec_update_param(info, param->name, param->value, 0);
++		if (rc)
++			goto free_info;
++	}
+ 
+ 	rc = iface_conf_write(iface);
+ free_info:
+@@ -449,6 +466,7 @@ static int iface_setup_binding_from_kern
+ {
+ 	struct host_info *hinfo = data;
+ 	struct iface_rec iface;
++	char iface_path[PATH_MAX];
+ 
+ 	if (!strlen(hinfo->iface.hwaddress)) {
+ 		log_error("Invalid offload iSCSI host %u. Missing "
+@@ -474,7 +492,11 @@ static int iface_setup_binding_from_kern
+ 			 hinfo->iface.transport_name, hinfo->iface.hwaddress);
+ 	}
+ 
+-	if (iface_conf_read(&iface)) {
++	memset(iface_path, 0, sizeof(iface_path));
++	snprintf(iface_path, PATH_MAX, "%s/%s", IFACE_CONFIG_DIR,
++		 iface.name);
++
++	if (access(iface_path, F_OK) != 0) {
+ 		/* not found so create it */
+ 		if (iface_conf_write(&iface)) {
+ 			log_error("Could not create default iface conf %s.",
+@@ -532,6 +554,8 @@ void iface_setup_host_bindings(void)
+ 	}
+ 	idbm_unlock();
+ 
++	transport_probe_for_offload();
++
+ 	if (iscsi_sysfs_for_each_host(NULL, &nr_found,
+ 				      __iface_setup_host_bindings))
+ 		log_error("Could not scan scsi hosts. HW/OFFLOAD iscsi "
+@@ -869,7 +893,8 @@ void iface_link_ifaces(struct list_head
+ int iface_setup_from_boot_context(struct iface_rec *iface,
+ 				   struct boot_context *context)
+ {
+-	struct iscsi_transport *t;
++	struct iscsi_transport *t = NULL;
++	char transport_name[ISCSI_TRANSPORT_NAME_MAXLEN];
+ 	uint32_t hostno;
+ 	int rc;
+ 
+@@ -884,6 +909,12 @@ int iface_setup_from_boot_context(struct
+ 			return 0;
+ 		}
+ 	} else if (strlen(context->iface)) {
++		memset(transport_name, 0, ISCSI_TRANSPORT_NAME_MAXLEN);
++		/* make sure offload driver is loaded */
++		if (!net_get_transport_name_from_netdev(context->iface,
++							transport_name))
++			t = iscsi_sysfs_get_transport_by_name(transport_name);
++
+ 		hostno = iscsi_sysfs_get_host_no_from_hwaddress(context->mac,
+ 								&rc);
+ 		if (rc) {
+@@ -904,7 +935,8 @@ int iface_setup_from_boot_context(struct
+ 	/*
+ 	 * set up for access through a offload card.
+ 	 */
+-	t = iscsi_sysfs_get_transport_by_hba(hostno);
++	if (!t)
++		t = iscsi_sysfs_get_transport_by_hba(hostno);
+ 	if (!t) {
+ 		log_error("Could not get transport for host%u. "
+ 			  "Make sure the iSCSI driver is loaded.",
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iface.h open-iscsi-2.0-872-rc4-bnx2i.work/usr/iface.h
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iface.h	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iface.h	2012-04-05 16:04:06.000000000 -0500
+@@ -26,7 +26,6 @@
+ 
+ struct iface_rec;
+ struct list_head;
+-struct db_set_param;
+ struct boot_context;
+ 
+ extern void iface_copy(struct iface_rec *dst, struct iface_rec *src);
+@@ -46,7 +45,7 @@ extern int iface_print_tree(void *data,
+ extern void iface_setup_host_bindings(void);
+ extern int iface_get_by_net_binding(struct iface_rec *pattern,
+ 				    struct iface_rec *out_rec);
+-extern int iface_conf_update(struct db_set_param *set_param,
++extern int iface_conf_update(struct list_head *params,
+ 			     struct iface_rec *iface);
+ extern int iface_conf_write(struct iface_rec *iface);
+ extern int iface_conf_delete(struct iface_rec *iface);
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/initiator_common.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/initiator_common.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/initiator_common.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/initiator_common.c	2012-04-05 16:04:06.000000000 -0500
+@@ -35,6 +35,7 @@
+ #include "host.h"
+ #include "sysdeps.h"
+ #include "iscsi_err.h"
++#include "iscsi_net_util.h"
+ 
+ struct iscsi_session *session_find_by_sid(uint32_t sid)
+ {
+@@ -566,6 +567,8 @@
+ {
+ 	struct iscsi_transport *t = session->t;
+ 	int rc = 0;
++	char *netdev;
++	struct host_info hinfo;
+ 
+ 	log_debug(3, "setting iface %s, dev %s, set ip %s, hw %s, "
+ 		  "transport %s.\n",
+@@ -582,6 +585,22 @@
+ 		return EINVAL;
+ 	}
+ 
++	/* these type of drivers need the netdev upd */
++	if (strlen(iface->netdev))
++		netdev = iface->netdev;
++	else {
++		memset(&hinfo, 0, sizeof(hinfo));
++		hinfo.host_no = session->hostno;
++		iscsi_sysfs_get_hostinfo_by_host_no(&hinfo);
++
++		netdev = hinfo.iface.netdev;
++	}
++
++	if (net_ifup_netdev(netdev))
++		log_warning("Could not brining up netdev %s. Try running "
++			    "'ifup %s' first if login fails.", netdev, netdev);
++
++
+ 	rc = host_set_param(t, session->hostno,
+ 			    ISCSI_HOST_PARAM_IPADDRESS,
+ 			    iface->ipaddress, ISCSI_STRING);
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iscsiadm.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsiadm.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iscsiadm.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsiadm.c	2012-04-05 16:04:06.000000000 -0500
+@@ -110,6 +110,7 @@ static struct option const long_options[
+ 	{"ip", required_argument, NULL, 'a'},
+ 	{"packetsize", required_argument, NULL, 'b'},
+ 	{"count", required_argument, NULL, 'c'},
++	{"interval", required_argument, NULL, 'i'},
+ 	{NULL, 0, NULL, 0},
+ };
+ static char *short_options = "RlDVhm:a:b:c:C:p:P:T:H:i:I:U:k:L:d:r:n:v:o:sSt:u";
+@@ -1116,6 +1117,17 @@ do_sendtargets(discovery_rec_t *drec, st
+ 			free(iface);
+ 			continue;
+ 		}
++		/* check for transport name first to make sure it is loaded */
++		t = iscsi_sysfs_get_transport_by_name(iface->transport_name);
++		if (!t) {
++			log_error("Could not load transport %s."
++				  "Dropping interface %s.",
++				   iface->transport_name, iface->name);
++			list_del(&iface->list);
++			free(iface);
++			continue;
++		}
++
+ 		host_no = iscsi_sysfs_get_host_no_from_hwinfo(iface, &rc);
+ 		if (rc || host_no == -1) {
+ 			log_debug(1, "Could not match iface" iface_fmt " to "
+@@ -1124,18 +1136,6 @@ do_sendtargets(discovery_rec_t *drec, st
+ 			continue;
+ 		}
+ 
+-		t = iscsi_sysfs_get_transport_by_hba(host_no);
+-		if (!t) {
+-			log_error("Could not match hostno %d to "
+-				  "transport. Dropping interface %s,"
+-				   iface_fmt " ,%s.",
+-				   host_no, iface->transport_name,
+-				   iface_str(iface), iface->ipaddress);
+-			list_del(&iface->list);
+-			free(iface);
+-			continue;
+-		}
+-
+ 		if (t->caps & CAP_SENDTARGETS_OFFLOAD) {
+ 			do_offload_sendtargets(drec, host_no, do_login);
+ 			list_del(&iface->list);
+@@ -1346,8 +1346,6 @@ get_chap:
+ 		goto exit_chap_info;
+ 	}
+ 
+-	log_info("Valid CHAP Entries = %d\n", valid_chap_entries);
+-
+ 	crec = (struct iscsi_chap_rec *) (req_buf +
+ 					  sizeof(struct iscsi_uevent));
+ 
+@@ -1440,13 +1438,45 @@ static int exec_host_chap_op(int op, int
+ 	return rc;
+ }
+ 
++static int verify_iface_params(struct list_head *params, struct node_rec *rec)
++{
++	struct user_param *param;
++
++	list_for_each_entry(param, params, list) {
++		if (!strcmp(param->name, IFACE_ISCSINAME)) {
++			log_error("Can not update "
++				  "iface.iscsi_ifacename. Delete it, "
++				  "and then create a new one.");
++			return ISCSI_ERR_INVAL;
++		}
++
++		if (iface_is_bound_by_hwaddr(&rec->iface) &&
++		    !strcmp(param->name, IFACE_NETNAME)) {
++			log_error("Can not update interface binding "
++				  "from hwaddress to net_ifacename. "
++				  "You must delete the interface and "
++				  "create a new one");
++			return ISCSI_ERR_INVAL;
++		}
++
++		if (iface_is_bound_by_netdev(&rec->iface) &&
++		    !strcmp(param->name, IFACE_HWADDR)) {
++			log_error("Can not update interface binding "
++				  "from net_ifacename to hwaddress. "
++				  "You must delete the interface and "
++				  "create a new one");
++			return ISCSI_ERR_INVAL;
++		}
++	}
++	return 0;
++}
++
+ /* TODO: merge iter helpers and clean them up, so we can use them here */
+ static int exec_iface_op(int op, int do_show, int info_level,
+ 			 struct iface_rec *iface, uint32_t host_no,
+-			 char *name, char *value)
++			 struct list_head *params)
+ {
+ 	struct host_info hinfo;
+-	struct db_set_param set_param;
+ 	struct node_rec *rec = NULL;
+ 	int rc = 0;
+ 
+@@ -1502,7 +1532,7 @@ delete_fail:
+ 			  iscsi_err_to_str(rc));
+ 		break;
+ 	case OP_UPDATE:
+-		if (!iface || !name || !value) {
++		if (!iface || list_empty(params)) {
+ 			log_error("Update requires name, value, and iface.");
+ 			rc = ISCSI_ERR_INVAL;
+ 			break;
+@@ -1520,42 +1550,16 @@ delete_fail:
+ 				    "sessions then log back in for the "
+ 				    "new settings to take affect.");
+ 
+-		if (!strcmp(name, IFACE_ISCSINAME)) {
+-			log_error("Can not update "
+-				  "iface.iscsi_ifacename. Delete it, "
+-				  "and then create a new one.");
+-			rc = ISCSI_ERR_INVAL;
+-			break;
+-		}
+-
+-		if (iface_is_bound_by_hwaddr(&rec->iface) &&
+-		    !strcmp(name, IFACE_NETNAME)) {
+-			log_error("Can not update interface binding "
+-				  "from hwaddress to net_ifacename. ");
+-			log_error("You must delete the interface and "
+-				  "create a new one");
+-			rc = ISCSI_ERR_INVAL;
+-			break;
+-		}
+-
+-		if (iface_is_bound_by_netdev(&rec->iface) &&
+-		    !strcmp(name, IFACE_HWADDR)) {
+-			log_error("Can not update interface binding "
+-				  "from net_ifacename to hwaddress. ");
+-			log_error("You must delete the interface and "
+-				  "create a new one");
+-			rc = ISCSI_ERR_INVAL;
++		rc = verify_iface_params(params, rec);
++		if (rc)
+ 			break;
+-		}
+-		set_param.name = name;
+-		set_param.value = value;
+ 
+ 		/* pass rec's iface because it has the db values */
+-		rc = iface_conf_update(&set_param, &rec->iface);
++		rc = iface_conf_update(params, &rec->iface);
+ 		if (rc)
+ 			goto update_fail;
+ 
+-		rc = __for_each_matched_rec(0, rec, &set_param,
++		rc = __for_each_matched_rec(0, rec, params,
+ 					    idbm_node_set_param);
+ 		if (rc == ISCSI_ERR_NO_OBJS_FOUND)
+ 			rc = 0;
+@@ -1638,14 +1642,62 @@ update_fail:
+ 	return rc;
+ }
+ 
++static int verify_node_params(struct list_head *params, struct node_rec *rec)
++{
++	struct user_param *param;
++
++	if (list_empty(params)) {
++		log_error("update requires name and value");
++		return ISCSI_ERR_INVAL;
++	}
++
++	list_for_each_entry(param, params, list) {
++		/* compat - old tools used node and iface transport name */
++		if (!strncmp(param->name, "iface.", 6) &&
++		     strcmp(param->name, "iface.transport_name")) {
++			log_error("Cannot modify %s. Use iface mode to update "
++				  "this value.", param->name);
++			return ISCSI_ERR_INVAL;
++		}
++
++		if (!strcmp(param->name, "node.transport_name")) {
++			free(param->name);
++			param->name = strdup("iface.transport_name");
++			if (!param->name) {
++				log_error("Could not allocate memory for "
++					  "param.");
++				return ISCSI_ERR_NOMEM;
++			}
++		}
++		/*
++		 * tmp hack - we added compat crap above for the transport,
++		 * but want to fix Doran's issue in this release too. However
++		 * his patch is too harsh on many settings and we do not have
++		 * time to update apps so we have this tmp hack until we
++		 * can settle on a good interface that distros can use
++		 * and we can mark stable.
++		 */
++		if (!strcmp(param->name, "iface.transport_name")) {
++			if (iscsi_check_for_running_session(rec)) {
++				log_warning("Cannot modify node/iface "
++					    "transport name while a session "
++					    "is using it. Log out the session "
++					    "then update record.");
++				return ISCSI_ERR_SESS_EXISTS;
++			}
++		}
++	}
++
++	return 0;
++}
++
+ /* TODO cleanup arguments */
+ static int exec_node_op(int op, int do_login, int do_logout,
+ 			int do_show, int do_rescan, int do_stats,
+ 			int info_level, struct node_rec *rec,
+-			char *name, char *value)
++			struct list_head *params)
+ {
+ 	int rc = 0;
+-	struct db_set_param set_param;
+ 
+ 	if (rec)
+ 		log_debug(2, "%s: %s:%s node [%s,%s,%d] sid %u", __FUNCTION__,
+@@ -1708,46 +1760,11 @@ static int exec_node_op(int op, int do_l
+ 	}
+ 
+ 	if (op == OP_UPDATE) {
+-		if (!name || !value) {
+-			log_error("update requires name and value");
+-			rc = ISCSI_ERR_INVAL;
+-			goto out;
+-		}
+-
+-		/* compat - old tools used node and iface transport name */
+-		if (!strncmp(name, "iface.", 6) &&
+-		     strcmp(name, "iface.transport_name")) {
+-			log_error("Cannot modify %s. Use iface mode to update "
+-				  "this value.", name);
+-			rc = ISCSI_ERR_INVAL;
++		rc = verify_node_params(params, rec);
++		if (rc)
+ 			goto out;
+-		}
+-
+-		if (!strcmp(name, "node.transport_name"))
+-			name = "iface.transport_name";
+-		/*
+-		 * tmp hack - we added compat crap above for the transport,
+-		 * but want to fix Doran's issue in this release too. However
+-		 * his patch is too harsh on many settings and we do not have
+-		 * time to update apps so we have this tmp hack until we
+-		 * can settle on a good interface that distros can use
+-		 * and we can mark stable.
+-		 */
+-		if (!strcmp(name, "iface.transport_name")) {
+-			if (iscsi_check_for_running_session(rec)) {
+-				log_warning("Cannot modify node/iface "
+-					    "transport name while a session "
+-					    "is using it. Log out the session "
+-					    "then update record.");
+-				rc = ISCSI_ERR_SESS_EXISTS;
+-				goto out;
+-			}
+-		}
+ 
+-		set_param.name = name;
+-		set_param.value = value;
+-
+-		rc = for_each_matched_rec(rec, &set_param, idbm_node_set_param);
++		rc = for_each_matched_rec(rec, params, idbm_node_set_param);
+ 		goto out;
+ 	} else if (op == OP_DELETE) {
+ 		rc = for_each_matched_rec(rec, NULL, delete_node);
+@@ -2002,7 +2019,7 @@ static int exec_discover(int disc_type,
+ 
+ static int exec_disc2_op(int disc_type, char *ip, int port,
+ 			 struct list_head *ifaces, int info_level, int do_login,
+-			 int do_discover, int op, char *name, char *value,
++			 int do_discover, int op, struct list_head *params,
+ 			 int do_show)
+ {
+ 	struct discovery_rec drec;
+@@ -2081,16 +2098,12 @@ do_db_op:
+ 		if (rc)
+ 			log_error("Unable to delete record!");
+ 	} else if (op == OP_UPDATE) {
+-		struct db_set_param set_param;
+-
+-		if (!name || !value) {
++		if (list_empty(params)) {
+ 			log_error("Update requires name and value.");
+ 			rc = ISCSI_ERR_INVAL;
+ 			goto done;
+ 		}
+-		set_param.name = name;
+-		set_param.value = value;
+-		rc = idbm_discovery_set_param(&set_param, &drec);
++		rc = idbm_discovery_set_param(params, &drec);
+ 	} else {
+ 		log_error("Operation is not supported.");
+ 		rc = ISCSI_ERR_INVAL;
+@@ -2102,7 +2115,7 @@ done:
+ 
+ static int exec_disc_op(int disc_type, char *ip, int port,
+ 			struct list_head *ifaces, int info_level, int do_login,
+-			int do_discover, int op, char *name, char *value,
++			int do_discover, int op, struct list_head *params,
+ 			int do_show)
+ {
+ 	struct discovery_rec drec;
+@@ -2228,6 +2241,8 @@ static uint32_t parse_host_info(char *op
+ 
+ 	*rc = 0;
+ 	if (strstr(optarg, ":")) {
++		transport_probe_for_offload();
++
+ 		host_no = iscsi_sysfs_get_host_no_from_hwaddress(optarg,
+ 								 &err);
+ 		if (err) {
+@@ -2245,13 +2260,46 @@ static uint32_t parse_host_info(char *op
+ 	return host_no;
+ }
+ 
++static char *iscsi_ping_stat_strs[] = {
++	/* ISCSI_PING_SUCCESS */
++	"success",
++	/* ISCSI_PING_FW_DISABLED */
++	"firmware disabled",
++	/* ISCSI_PING_IPADDR_INVALID */
++	"invalid IP address",
++	/* ISCSI_PING_LINKLOCAL_IPV6_ADDR_INVALID */
++	"invalid link local IPv6 address",
++	/* ISCSI_PING_TIMEOUT */
++	"timed out",
++	/* ISCSI_PING_INVALID_DEST_ADDR */
++	"invalid destination address",
++	/* ISCSI_PING_OVERSIZE_PACKET */
++	"oversized packet",
++	/* ISCSI_PING_ICMP_ERROR */
++	"ICMP error",
++	/* ISCSI_PING_MAX_REQ_EXCEEDED */
++	"Max request exceeded",
++	/* ISCSI_PING_NO_ARP_RECEIVED */
++	"No ARP response received",
++};
++
++static char *iscsi_ping_stat_to_str(uint32_t status)
++{
++	if (status < 0 || status > ISCSI_PING_NO_ARP_RECEIVED) {
++		log_error("Invalid ping status %u\n", status);
++		return NULL;
++	}
++
++	return iscsi_ping_stat_strs[status];
++}
++
+ static int exec_ping_op(struct iface_rec *iface, char *ip, int size, int count,
+ 			int interval)
+ {
+ 	int rc = ISCSI_ERR;
+ 	uint32_t iface_type = ISCSI_IFACE_TYPE_IPV4;
+ 	struct iscsi_transport *t = NULL;
+-	uint32_t host_no;
++	uint32_t host_no, status = 0;
+ 	struct sockaddr_storage addr;
+ 	int i;
+ 
+@@ -2324,11 +2372,15 @@ static int exec_ping_op(struct iface_rec
+ 		 * the iscsi if to send a ping, we can add a transport
+ 		 * callout here.
+ 		 */
++		status = 0;
+ 		rc = ipc->exec_ping(t->handle, host_no,
+ 				    (struct sockaddr *)&addr, iface->iface_num,
+-				    iface_type, size);
+-		if (!rc)
++				    iface_type, size, &status);
++		if (!rc && !status)
+ 			printf("Ping %d completed\n", i);
++		else if (status)
++			printf("Ping %d failed: %s\n", i,
++				iscsi_ping_stat_to_str(status));
+ 		else
+ 			printf("Ping %d failed: %s\n", i, iscsi_err_to_str(rc));
+ 
+@@ -2357,7 +2409,10 @@ main(int argc, char **argv)
+ 	struct iface_rec *iface = NULL, *tmp;
+ 	struct node_rec *rec = NULL;
+ 	uint32_t host_no = -1;
++	struct user_param *param;
++	struct list_head params;
+ 
++	INIT_LIST_HEAD(&params);
+ 	INIT_LIST_HEAD(&ifaces);
+ 	/* do not allow ctrl-c for now... */
+ 	memset(&sa_old, 0, sizeof(struct sigaction));
+@@ -2499,6 +2554,18 @@ main(int argc, char **argv)
+ 		case 'h':
+ 			usage(0);
+ 		}
++
++		if (name && value) {
++			param = idbm_alloc_user_param(name, value);
++			if (!param) {
++				log_error("Cannot allocate memory for params.");
++				rc = ISCSI_ERR_NOMEM;
++				goto free_ifaces;
++			}
++			list_add_tail(&param->list, &params);
++			name = NULL;
++			value = NULL;
++		}
+ 	}
+ 
+ 	if (optopt) {
+@@ -2585,7 +2652,7 @@ main(int argc, char **argv)
+ 					  ping_interval);
+ 		else
+ 			rc = exec_iface_op(op, do_show, info_level, iface,
+-					   host_no, name, value);
++					   host_no, &params);
+ 
+ 		break;
+ 	case MODE_DISCOVERYDB:
+@@ -2597,7 +2664,7 @@ main(int argc, char **argv)
+ 		}
+ 
+ 		rc = exec_disc2_op(type, ip, port, &ifaces, info_level,
+-				   do_login, do_discover, op, name, value,
++				   do_login, do_discover, op, &params,
+ 				   do_show);
+ 		break;
+ 	case MODE_DISCOVERY:
+@@ -2609,7 +2676,7 @@ main(int argc, char **argv)
+ 		}
+ 
+ 		rc = exec_disc_op(type, ip, port, &ifaces, info_level,
+-				  do_login, do_discover, op, name, value,
++				  do_login, do_discover, op, &params,
+ 				  do_show);
+ 		break;
+ 	case MODE_NODE:
+@@ -2653,7 +2720,7 @@ main(int argc, char **argv)
+ 
+ 		rc = exec_node_op(op, do_login, do_logout, do_show,
+ 				  do_rescan, do_stats, info_level, rec,
+-				  name, value);
++				  &params);
+ 		break;
+ 	case MODE_SESSION:
+ 		if ((rc = verify_mode_params(argc, argv,
+@@ -2723,7 +2790,7 @@ main(int argc, char **argv)
+ 			/* drop down to node ops */
+ 			rc = exec_node_op(op, do_login, do_logout, do_show,
+ 					  do_rescan, do_stats, info_level,
+-					  rec, name, value);
++					  rec, &params);
+ free_info:
+ 			free(info);
+ 			goto out;
+@@ -2737,7 +2804,7 @@ free_info:
+ 			if (do_logout || do_rescan || do_stats) {
+ 				rc = exec_node_op(op, do_login, do_logout,
+ 						 do_show, do_rescan, do_stats,
+-						 info_level, NULL, name, value);
++						 info_level, NULL, &params);
+ 				goto out;
+ 			}
+ 
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iscsid.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsid.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iscsid.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsid.c	2012-04-05 16:04:06.000000000 -0500
+@@ -409,11 +409,6 @@ int main(int argc, char *argv[])
+ 		exit(ISCSI_ERR);
+ 	}
+ 
+-	if (iscsi_sysfs_check_class_version()) {
+-		log_close(log_pid);
+-		exit(ISCSI_ERR);
+-	}
+-
+ 	umask(0177);
+ 
+ 	mgmt_ipc_fd = -1;
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_ipc.h open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_ipc.h
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_ipc.h	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_ipc.h	2012-04-05 16:04:06.000000000 -0500
+@@ -137,7 +137,7 @@ struct iscsi_ipc {
+ 
+ 	int (*exec_ping) (uint64_t transport_handle, uint32_t host_no,
+ 			  struct sockaddr *addr, uint32_t iface_num,
+-			  uint32_t iface_type, uint32_t size);
++			  uint32_t iface_type, uint32_t size, uint32_t *status);
+ 
+ 	int (*get_chap) (uint64_t transport_handle, uint32_t host_no,
+ 			 uint16_t chap_tbl_idx, uint32_t num_entries,
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_net_util.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_net_util.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_net_util.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_net_util.c	2012-04-05 16:04:24.000000000 -0500
+@@ -72,7 +72,7 @@ int net_get_transport_name_from_netdev(c
+ 	ifr.ifr_data = (caddr_t)&drvinfo;
+ 	err = ioctl(fd, SIOCETHTOOL, &ifr);
+ 	if (err < 0) {
+-		log_error("Could not get driver.");
++		log_error("Could not get driver %s.", netdev);
+ 		err = errno;
+ 		goto close_sock;
+ 	}
+@@ -228,7 +228,7 @@ int net_setup_netdev(char *netdev, char
+ 
+ 		/* Bring up interface */
+ 		memset(&ifr, 0, sizeof(ifr));
+-		strncpy(ifr.ifr_name, netdev, IFNAMSIZ);
++		strlcpy(ifr.ifr_name, netdev, IFNAMSIZ);
+ 		ifr.ifr_flags = IFF_UP | IFF_RUNNING;
+ 		if (ioctl(sock, SIOCSIFFLAGS, &ifr) < 0) {
+ 			log_error("Could not bring up netdev %s (err %d - %s)",
+@@ -238,7 +238,7 @@ int net_setup_netdev(char *netdev, char
+ 		}
+ 		/* Set IP address */
+ 		memset(&ifr, 0, sizeof(ifr));
+-		strncpy(ifr.ifr_name, netdev, IFNAMSIZ);
++		strlcpy(ifr.ifr_name, netdev, IFNAMSIZ);
+ 		memcpy(&ifr.ifr_addr, &sk_ipaddr, sizeof(struct sockaddr));
+ 		if (ioctl(sock, SIOCSIFADDR, &ifr) < 0) {
+ 			log_error("Could not set ip for %s (err %d - %s)",
+@@ -249,7 +249,7 @@ int net_setup_netdev(char *netdev, char
+ 	
+ 		/* Set netmask */
+ 		memset(&ifr, 0, sizeof(ifr));
+-		strncpy(ifr.ifr_name, netdev, IFNAMSIZ);
++		strlcpy(ifr.ifr_name, netdev, IFNAMSIZ);
+ 		memcpy(&ifr.ifr_addr, &sk_netmask, sizeof(struct sockaddr));
+ 		if (ioctl(sock, SIOCSIFNETMASK, &ifr) < 0) {
+ 			log_error("Could not set ip for %s (err %d - %s)",
+@@ -304,6 +304,59 @@ int net_setup_netdev(char *netdev, char
+ done:
+ 	close(sock);
+ 	return ret;
++}
++
++/**
++ * net_ifup_netdev - bring up network interface
++ * @netdev: netdevice to bring up.
++ */
++int net_ifup_netdev(char *netdev)
++{
++	struct ifreq ifr;
++	int sock;
++	int ret = 0;
++
++	if (!strlen(netdev)) {
++		log_error("No netdev name in fw entry.\n");
++		return EINVAL;
++	}		
++
++	/* Create socket for making networking changes */
++	if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
++		log_error("Could not open socket to manage network "
++			  "(err %d - %s)", errno, strerror(errno));
++		return errno;
++	}
++
++	memset(&ifr, 0, sizeof(ifr));
++	strlcpy(ifr.ifr_name, netdev, IFNAMSIZ);
++	if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0) {
++		log_error("Could not bring up netdev %s (err %d - %s)",
++			  netdev, errno, strerror(errno));
++		ret = errno;
++		goto done;
++	}
++
++	if (ifr.ifr_flags & IFF_UP) {
++		log_debug(3, "%s up\n", netdev);
++		goto done;
++	}
++
++	log_debug(3, "bringing %s up\n", netdev);
++
++	/* Bring up interface */
++	memset(&ifr, 0, sizeof(ifr));
++	strlcpy(ifr.ifr_name, netdev, IFNAMSIZ);
++	ifr.ifr_flags = IFF_UP;
++	if (ioctl(sock, SIOCSIFFLAGS, &ifr) < 0) {
++		log_error("Could not bring up netdev %s (err %d - %s)",
++			  netdev, errno, strerror(errno));
++		ret = errno;
++		goto done;
++	}
++done:
++	close(sock);
++	return ret;
+ }
+ 
+ 
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iscsistart.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsistart.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iscsistart.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsistart.c	2012-04-05 16:04:06.000000000 -0500
+@@ -40,6 +40,7 @@
+ #include "log.h"
+ #include "iscsi_util.h"
+ #include "idbm.h"
++#include "idbm_fields.h"
+ #include "version.h"
+ #include "iscsi_sysfs.h"
+ #include "iscsi_settings.h"
+@@ -48,6 +49,7 @@
+ #include "sysdeps.h"
+ #include "iscsid_req.h"
+ #include "iscsi_err.h"
++#include "iface.h"
+ 
+ /* global config info */
+ /* initiator needs initiator name/alias */
+@@ -58,11 +60,6 @@ static node_rec_t config_rec;
+ static LIST_HEAD(targets);
+ static LIST_HEAD(user_params);
+ 
+-struct user_param {
+-	struct list_head list;
+-	char *param_string;
+-};
+-
+ static char program_name[] = "iscsistart";
+ 
+ /* used by initiator */
+@@ -145,11 +142,34 @@ static int apply_params(struct node_rec
+ 	rec->conn[0].timeo.noop_out_timeout = -1;
+ 
+ 	list_for_each_entry(param, &user_params, list) {
+-		rc = idbm_parse_param(param->param_string, rec);
+-		if (rc)
+-			return rc;
++		/*
++		 * user may not have passed in all params that were set by
++		 * ibft/iscsi_boot, so clear out values that might conflict
++		 * with user overrides
++		 */
++		if (!strcmp(param->name, IFACE_NETNAME)) {
++			/* overriding netname so MAC will be for old netdev */
++			memset(rec->iface.hwaddress, 0,
++				sizeof(rec->iface.hwaddress));
++		} else if (!strcmp(param->name, IFACE_HWADDR)) {
++			/* overriding MAC so netdev will be for old MAC */
++			memset(rec->iface.netdev, 0, sizeof(rec->iface.netdev));
++		} else if (!strcmp(param->name, IFACE_TRANSPORTNAME)) {
++			/*
++			 * switching drivers so all old binding info is no
++			 * longer valid. Old values were either for offload
++			 * and we are switching to software or the reverse,
++			 * or switching types of cards (bnx2i to cxgb3i).
++			 */
++			memset(&rec->iface, 0, sizeof(rec->iface));
++			iface_setup_defaults(&rec->iface);
++		}
+ 	}
+ 
++	rc = idbm_node_set_rec_from_param(&user_params, rec, 0);
++	if (rc)
++		return rc;
++
+ 	/*
+ 	 * For root boot we could not change this in older versions so
+ 	 * if user did not override then use the defaults.
+@@ -167,23 +187,32 @@ static int apply_params(struct node_rec
+ 	return 0;
+ }
+ 
+-static int alloc_param(char *param_string)
++static int parse_param(char *param_str)
+ {
+ 	struct user_param *param;
++	char *name, *value;
+ 
+-	param = calloc(1, sizeof(*param));
+-	if (!param) {
+-		printf("Could not allocate for param.\n");
+-		return ISCSI_ERR_NOMEM;
++	name = param_str;
++
++	value = strchr(param_str, '=');
++	if (!value) {
++		log_error("Invalid --param %s. Missing value.", param_str);
++		return ISCSI_ERR_INVAL;
++	}
++	*value = '\0';
++
++	value++;
++	if (!strlen(value)) {
++		log_error("Invalid --param %s. Missing value.", param_str);
++		return ISCSI_ERR_INVAL;
+ 	}
+ 
+-	INIT_LIST_HEAD(&param->list);
+-	param->param_string = strdup(param_string);
+-	if (!param->param_string) {
+-		printf("Could not allocate for param.\n");
+-		free(param);
++	param = idbm_alloc_user_param(name, value);
++	if (!param) {
++		log_error("Could not allocate memory for param.");
+ 		return ISCSI_ERR_NOMEM;
+ 	}
++
+ 	list_add(&param->list, &user_params);
+ 	return 0;
+ }
+@@ -196,7 +225,7 @@ static int login_session(struct node_rec
+ 
+ 	rc = apply_params(rec);
+ 	if (rc)
+-		exit(rc);
++		return rc;
+ 
+ 	printf("%s: Logging into %s %s:%d,%d\n", program_name, rec->name,
+ 		rec->conn[0].address, rec->conn[0].port,
+@@ -316,8 +345,6 @@ int main(int argc, char *argv[])
+ 	log_init(program_name, DEFAULT_AREA_SIZE, log_do_log_std, NULL);
+ 
+ 	sysfs_init();
+-	if (iscsi_sysfs_check_class_version())
+-		exit(ISCSI_ERR_SYSFS_LOOKUP);
+ 
+ 	while ((ch = getopt_long(argc, argv, "P:i:t:g:a:p:d:u:w:U:W:bNfvh",
+ 				 long_options, &longindex)) >= 0) {
+@@ -399,7 +426,7 @@ int main(int argc, char *argv[])
+ 			fw_free_targets(&targets);
+ 			exit(0);
+ 		case 'P':
+-			err = alloc_param(optarg);
++			err = parse_param(optarg);
+ 			if (err)
+ 				exit(err);
+ 			break;
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_sysfs.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_sysfs.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_sysfs.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_sysfs.c	2012-04-05 16:04:06.000000000 -0500
+@@ -532,6 +532,12 @@ static int iscsi_sysfs_read_iface(struct
+ 		ret = 0;
+ 	}
+ 
++	sysfs_get_str(host_id, ISCSI_HOST_SUBSYS, "port_state",
++		      iface->port_state, sizeof(iface->port_state));
++
++	sysfs_get_str(host_id, ISCSI_HOST_SUBSYS, "port_speed",
++		      iface->port_speed, sizeof(iface->port_speed));
++
+ 	/*
+ 	 * this is on the session, because we support multiple bindings
+ 	 * per device.
+@@ -1144,13 +1150,31 @@ static uint32_t get_target_no_from_sid(u
+ 
+ }
+ 
++int iscsi_sysfs_is_transport_loaded(char *transport_name)
++{
++	struct iscsi_transport *t;
++
++	/* sync up kernel and userspace */
++	read_transports();
++
++	/* check if the transport is loaded and matches */
++	list_for_each_entry(t, &transports, list) {
++		if (t->handle && !strncmp(t->name, transport_name,
++					  ISCSI_TRANSPORT_NAME_MAXLEN))
++			return 1;
++	}
++
++	return 0;
++}
++
+ struct iscsi_transport *iscsi_sysfs_get_transport_by_name(char *transport_name)
+ {
+ 	struct iscsi_transport *t;
++	int retry = 0;
+ 
++retry:
+ 	/* sync up kernel and userspace */
+-	if (read_transports())
+-		return NULL;
++	read_transports();
+ 
+ 	/* check if the transport is loaded and matches */
+ 	list_for_each_entry(t, &transports, list) {
+@@ -1158,6 +1182,13 @@ struct iscsi_transport *iscsi_sysfs_get_
+ 					  ISCSI_TRANSPORT_NAME_MAXLEN))
+ 			return t;
+ 	}
++
++	if (retry < 1) {
++		retry++;
++		if (!transport_load_kmod(transport_name))
++			goto retry;
++	}
++
+ 	return NULL;
+ }
+ 
+@@ -1366,40 +1397,3 @@ char *iscsi_sysfs_get_iscsi_kernel_versi
+ {
+ 	return sysfs_attr_get_value("/module/scsi_transport_iscsi", "version");
+ }
+-
+-int iscsi_sysfs_check_class_version(void)
+-{
+-	char *version;
+-	int i;
+-
+-	version = iscsi_sysfs_get_iscsi_kernel_version();
+-	if (!version)
+-		goto fail;
+-
+-	log_warning("transport class version %s. iscsid version %s",
+-		    version, ISCSI_VERSION_STR);
+-
+-	for (i = 0; i < strlen(version); i++) {
+-		if (version[i] == '-')
+-			break;
+-	}
+-
+-	if (i == strlen(version))
+-		goto fail;
+-
+-	/*
+-	 * We want to make sure the release and interface are the same.
+-	 * It is ok for the svn versions to be different.
+-	 */
+-	if (!strncmp(version, ISCSI_VERSION_STR, i) ||
+-	   /* support 2.6.18 */
+-	    !strncmp(version, "1.1", 3))
+-		return 0;
+-
+-fail:
+-	log_error( "Missing or Invalid version from %s. Make sure a up "
+-		"to date scsi_transport_iscsi module is loaded and a up to"
+-		"date version of iscsid is running. Exiting...",
+-		ISCSI_VERSION_FILE);
+-	return -1;
+-}
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_sysfs.h open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_sysfs.h
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_sysfs.h	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_sysfs.h	2012-04-05 16:04:06.000000000 -0500
+@@ -36,7 +36,6 @@ struct iscsi_auth_config;
+ 
+ extern void free_transports(void);
+ extern char *iscsi_sysfs_get_iscsi_kernel_version(void);
+-extern int iscsi_sysfs_check_class_version(void);
+ extern int iscsi_sysfs_get_sessioninfo_by_id(struct session_info *info,
+ 					     char *sys_session);
+ extern int iscsi_sysfs_session_has_leadconn(uint32_t sid);
+@@ -89,6 +88,7 @@ extern struct iscsi_transport *iscsi_sys
+ extern struct iscsi_transport *iscsi_sysfs_get_transport_by_session(char *sys_session);
+ extern struct iscsi_transport *iscsi_sysfs_get_transport_by_sid(uint32_t sid);
+ extern struct iscsi_transport *iscsi_sysfs_get_transport_by_name(char *transport_name);
++extern int iscsi_sysfs_is_transport_loaded(char *transport_name);
+ extern int iscsi_sysfs_session_supports_nop(int sid);
+ extern int iscsi_sysfs_session_user_created(int sid);
+ 
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_util.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_util.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_util.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_util.c	2012-04-05 16:04:06.000000000 -0500
+@@ -90,13 +90,24 @@ str_to_ipport(char *str, int *port, int
+ 
+ 	if (!strchr(ip, '.')) {
+ 		if (*ip == '[') {
++			/* IPv6 with [] */
+ 			if (!(sport = strchr(ip, ']')))
+ 				return NULL;
+ 			*sport++ = '\0';
+ 			ip++;
+ 			str = sport;
+-		} else
+-			sport = NULL;
++		} else {
++			/* hostname or ipv6 */
++			sport = strchr(ip, ':');
++			if (sport) {
++				if (strchr(sport + 1, ':'))
++					/* ipv6 */
++					sport = NULL;
++				else
++					/* hostname:port */
++					str = sport;
++			}
++		}
+ 	}
+ 
+ 	if (sport && (sport = strchr(str, ':'))) {
+@@ -178,7 +189,6 @@ char *strstrip(char *s)
+ char *cfg_get_string_param(char *pathname, const char *key)
+ {
+ 	FILE *f = NULL;
+-	int len;
+ 	char *line, buffer[1024];
+ 	char *value = NULL, *param, *comment;
+ 
+@@ -187,7 +197,6 @@ char *cfg_get_string_param(char *pathnam
+ 		return NULL;
+ 	}
+ 
+-	len = strlen(key);
+ 	if ((f = fopen(pathname, "r"))) {
+ 		while ((line = fgets(buffer, sizeof (buffer), f))) {
+ 			param = strstr(line, key);
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/Makefile open-iscsi-2.0-872-rc4-bnx2i.work/usr/Makefile
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/Makefile	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/Makefile	2012-04-05 16:04:06.000000000 -0500
+@@ -33,7 +33,7 @@ endif
+ OPTFLAGS ?= -O2 -g
+ WARNFLAGS ?= -Wall -Wstrict-prototypes
+ CFLAGS += $(OPTFLAGS) $(WARNFLAGS) -I../include -I. -I../utils/open-isns \
+-					-D$(OSNAME) $(IPC_CFLAGS) -DISNS_ENABLE
++				-D$(OSNAME) $(IPC_CFLAGS) -DISNS_ENABLE
+ PROGRAMS = iscsid iscsiadm iscsistart
+ 
+ # libc compat files
+@@ -57,7 +57,7 @@ all: $(PROGRAMS)
+ 
+ iscsid: $(ISCSI_LIB_SRCS) $(INITIATOR_SRCS) $(DISCOVERY_SRCS) \
+ 	iscsid.o session_mgmt.o discoveryd.o
+-	$(CC) $(CFLAGS) $^ -o $@ -L../utils/open-isns -lisns
++	$(CC) $(CFLAGS) $^ -o $@  -L../utils/open-isns -lisns
+ 
+ iscsiadm: $(ISCSI_LIB_SRCS) $(DISCOVERY_SRCS) iscsiadm.o session_mgmt.o
+ 	$(CC) $(CFLAGS) $^ -o $@ -L../utils/open-isns -lisns
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/netlink.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/netlink.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/netlink.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/netlink.c	2012-04-05 16:04:06.000000000 -0500
+@@ -1085,13 +1085,15 @@ ksend_ping(uint64_t transport_handle, ui
+ 
+ static int kexec_ping(uint64_t transport_handle, uint32_t host_no,
+ 		      struct sockaddr *addr, uint32_t iface_num,
+-		      uint32_t iface_type, uint32_t size)
++		      uint32_t iface_type, uint32_t size, uint32_t *status)
+ {
+ 	struct pollfd pfd;
+ 	struct timeval ping_timer;
+ 	int timeout, fd, rc;
+ 	uint32_t pid;
+ 
++	*status = 0;
++
+ 	fd = ipc->ctldev_open();
+ 	if (fd < 0) {
+ 		log_error("Could not open netlink socket.");
+@@ -1151,10 +1153,8 @@ static int kexec_ping(uint64_t transport
+ 				if (pid != ping_event.pid)
+ 					continue;
+ 
+-				if (ping_event.status == 0)
+-					rc = 0;
+-				else
+-					rc = ISCSI_ERR;
++				rc = 0;
++				*status = ping_event.status;
+ 				break;
+ 			}
+ 
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/transport.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/transport.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/transport.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/transport.c	2012-04-05 16:04:16.000000000 -0500
+@@ -19,7 +19,17 @@
+ #include <stdio.h>
+ #include <unistd.h>
+ #include <errno.h>
++#ifdef USE_KMOD
++#include <libkmod.h>
++#endif
++#include <net/if.h>
++#include <sys/ioctl.h>
++#include <sys/socket.h>
++#include <sys/types.h>
++#include <sys/wait.h>
+ 
++#include "sysdeps.h"
++#include "iscsi_err.h"
+ #include "initiator.h"
+ #include "transport.h"
+ #include "log.h"
+@@ -100,6 +110,152 @@ static struct iscsi_transport_template *
+ 	NULL
+ };
+ 
++int transport_probe_for_offload(void)
++{
++	struct if_nameindex *ifni;
++	char transport_name[ISCSI_TRANSPORT_NAME_MAXLEN];
++	int i, sockfd;
++	struct ifreq if_hwaddr;
++
++	ifni = if_nameindex();
++	if (!ifni) {
++		log_error("Could not search for transport modules: %s",
++			  strerror(errno));
++		return ISCSI_ERR_TRANS_NOT_FOUND;
++	}
++
++	sockfd = socket(AF_INET, SOCK_DGRAM, 0);
++	if (sockfd < 0) {
++		log_error("Could not open socket for ioctl: %s",
++			  strerror(errno));
++		goto free_ifni;
++	}
++
++	for (i = 0; ifni[i].if_index && ifni[i].if_name; i++) {
++		struct if_nameindex *n = &ifni[i];
++
++		log_debug(6, "kmod probe found %s\n", n->if_name);
++
++		strlcpy(if_hwaddr.ifr_name, n->if_name, IFNAMSIZ);
++		if (ioctl(sockfd, SIOCGIFHWADDR, &if_hwaddr) < 0)
++			continue;
++
++		/* check for ARPHRD_ETHER (ethernet) */
++		if (if_hwaddr.ifr_hwaddr.sa_family != 1)
++			continue;
++
++		if (net_get_transport_name_from_netdev(n->if_name,
++						       transport_name))
++			continue;
++
++		transport_load_kmod(transport_name);
++	}
++	close(sockfd);
++
++free_ifni:
++	if_freenameindex(ifni);
++	return 0;
++}
++
++/*
++ * Most distros still do not have wide libkmod use, so
++ * use modprobe for now
++ */
++#ifdef USE_KMOD
++int transport_load_kmod(char *transport_name)
++{
++	struct kmod_ctx *ctx;
++	struct kmod_module *mod;
++	int rc;
++
++	ctx = kmod_new(NULL, NULL);
++	if (!ctx) {
++		log_error("Could not load transport module %s. Out of "
++			  "memory.", transport_name);
++		return ISCSI_ERR_NOMEM;
++	}
++
++	kmod_load_resources(ctx);
++
++	/*
++	 * dumb dumb dumb - named iscsi_tcp and ib_iser differently from
++	 * transport name
++	 */
++	if (!strcmp(transport_name, "tcp"))
++		rc = kmod_module_new_from_name(ctx, "iscsi_tcp", &mod);
++	else if (!strcmp(transport_name, "iser"))
++		rc = kmod_module_new_from_name(ctx, "ib_iser", &mod);
++	else
++		rc = kmod_module_new_from_name(ctx, transport_name, &mod);
++	if (rc) {
++		log_error("Failed to load module %s.", transport_name);
++		rc = ISCSI_ERR_TRANS_NOT_FOUND;
++		goto unref_mod;
++	}
++
++	rc = kmod_module_probe_insert_module(mod, KMOD_PROBE_APPLY_BLACKLIST,
++					     NULL, NULL, NULL, NULL);
++	if (rc) {
++		log_error("Could not insert module %s. Kmod error %d",
++			  transport_name, rc);
++		rc = ISCSI_ERR_TRANS_NOT_FOUND;
++	}
++	kmod_module_unref(mod);
++
++unref_mod:
++	kmod_unref(ctx);
++	return rc;
++}
++
++#else
++
++int transport_load_kmod(char *transport_name)
++{
++	char *cmdline[4];
++	pid_t pid;
++
++	cmdline[0] = "/sbin/modprobe";
++	cmdline[1] = "-qb";
++	cmdline[3] = NULL;
++
++	/*
++	 * dumb dumb mistake - named iscsi_tcp and ib_iser differently from
++	 * transport name
++	 */
++	if (!strcmp(transport_name, "tcp"))
++		cmdline[2] = "iscsi_tcp";
++	else if (!strcmp(transport_name, "iser"))
++		cmdline[2] = "ib_iser";
++	else
++		cmdline[2] = transport_name;
++
++	if (iscsi_sysfs_is_transport_loaded(cmdline[2]))
++		return 0;
++
++	pid = fork();
++	if (pid == 0) {
++		if (execv("/sbin/modprobe", cmdline) < 0) {
++			log_error("Failed to load module %s: %s",
++				   transport_name, strerror(errno));
++			exit(-errno);
++		}
++		exit(0);
++	} else if (pid < 0) {
++		log_error("Failed to fork process to load module %s: %s",
++			  transport_name, strerror(errno));
++		return ISCSI_ERR_TRANS_NOT_FOUND;
++	}
++
++	if (waitpid(pid, NULL, 0) < 0) {
++		log_error("Failed to load module %s", transport_name);
++		return ISCSI_ERR_TRANS_NOT_FOUND;
++	}
++
++	return 0;
++}
++
++#endif
++
+ int set_transport_template(struct iscsi_transport *t)
+ {
+ 	struct iscsi_transport_template *tmpl;
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/transport.h open-iscsi-2.0-872-rc4-bnx2i.work/usr/transport.h
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/transport.h	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/transport.h	2012-04-05 16:04:06.000000000 -0500
+@@ -51,5 +51,7 @@ struct iscsi_transport {
+ };
+ 
+ extern int set_transport_template(struct iscsi_transport *t);
++extern int transport_load_kmod(char *transport_name);
++extern int transport_probe_for_offload(void);
+ 
+ #endif
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/utils/fwparam_ibft/fw_entry.c open-iscsi-2.0-872-rc4-bnx2i.work/utils/fwparam_ibft/fw_entry.c
+--- open-iscsi-2.0-872-rc4-bnx2i/utils/fwparam_ibft/fw_entry.c	2012-04-05 16:03:19.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.work/utils/fwparam_ibft/fw_entry.c	2012-04-05 16:04:06.000000000 -0500
+@@ -35,6 +35,8 @@
+ #include "idbm_fields.h"
+ #include "iscsi_net_util.h"
+ #include "iscsi_err.h"
++#include "config.h"
++#include "iface.h"
+ 
+ /**
+  * fw_setup_nics - setup nics (ethXs) based on ibft net info
+@@ -146,11 +148,19 @@ void fw_free_targets(struct list_head *l
+ 
+ static void dump_initiator(struct boot_context *context)
+ {
++	struct iface_rec iface;
++
++	memset(&iface, 0, sizeof(iface));
++	iface_setup_defaults(&iface);
++	iface_setup_from_boot_context(&iface, context);
++
+ 	if (strlen(context->initiatorname))
+ 		printf("%s = %s\n", IFACE_INAME, context->initiatorname);
+ 
+ 	if (strlen(context->isid))
+ 		printf("%s = %s\n", IFACE_ISID, context->isid);
++
++	printf("%s = %s\n", IFACE_TRANSPORTNAME, iface.transport_name);
+ }
+ 
+ static void dump_target(struct boot_context *context)

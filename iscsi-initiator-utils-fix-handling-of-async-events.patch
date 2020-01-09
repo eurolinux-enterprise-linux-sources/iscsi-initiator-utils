@@ -1,0 +1,56 @@
+From 7b87f0d34527c20800b3cc17f0e664ff01464196 Mon Sep 17 00:00:00 2001
+From: Mike Christie <michaelc@cs.wisc.edu>
+Date: Fri, 14 Mar 2014 01:41:29 -0500
+Subject: [PATCH] iscsid: Fix handling of iscsi async events.
+
+When iscsi targets send 32 or more iscsi async event pdus the
+initiator will run out of memory for events and this message:
+
+BUG: iscsid: Can not allocate memory for receive context.
+
+will be logged non stop. iscsid will then not be able to
+complate any more requests because it is stuck in a endless loop
+printing that message.
+
+This fixes the problem by having iscsid handle an event after it
+has read it in from netlink or the mgmt ipc. Previously we would
+queue all events then handle them.
+---
+ usr/event_poll.c |    5 ++++-
+ usr/netlink.c    |    2 +-
+ 2 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/usr/event_poll.c b/usr/event_poll.c
+index f36fec1..939f1a2 100644
+--- a/usr/event_poll.c
++++ b/usr/event_poll.c
+@@ -165,8 +165,11 @@ void event_loop(struct iscsi_ipc *ipc, int control_fd, int mgmt_ipc_fd)
+ 					  "exiting", res, errno);
+ 				break;
+ 			}
+-		} else
++		}
++
++		if (res >= 0)
+ 			actor_poll();
++
+ 		reap_proc();
+ 		/*
+ 		 * flush sysfs cache since kernel objs may
+diff --git a/usr/netlink.c b/usr/netlink.c
+index 1c4b5cc..532d9ef 100644
+--- a/usr/netlink.c
++++ b/usr/netlink.c
+@@ -1615,8 +1615,8 @@ static int ctldev_handle(void)
+ 
+ 	ev_context = ipc_ev_clbk->get_ev_context(conn, ev_size);
+ 	if (!ev_context) {
+-		/* retry later */
+ 		log_error("Can not allocate memory for receive context.");
++		drop_data(nlh);
+ 		return -ENOMEM;
+ 	}
+ 
+-- 
+1.7.1
+

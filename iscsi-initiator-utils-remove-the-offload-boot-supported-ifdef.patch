@@ -1,0 +1,46 @@
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iface.c open-iscsi-2.0-872-rc4-bnx2i.test/usr/iface.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iface.c	2011-09-08 15:26:45.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.test/usr/iface.c	2011-09-08 15:31:32.000000000 -0500
+@@ -829,6 +829,7 @@ int iface_setup_from_boot_context(struct
+ {
+ 	struct iscsi_transport *t;
+ 	uint32_t hostno;
++	int rc;
+ 
+ 	if (strlen(context->initiatorname))
+ 		strlcpy(iface->iname, context->initiatorname,
+@@ -841,8 +842,6 @@ int iface_setup_from_boot_context(struct
+ 			return 0;
+ 		}
+ 	} else if (strlen(context->iface)) {
+-/* this ifdef is only temp until distros and firmwares are updated */
+-#ifdef OFFLOAD_BOOT_SUPPORTED
+ 		hostno = iscsi_sysfs_get_host_no_from_hwaddress(context->mac,
+ 								&rc);
+ 		if (rc) {
+@@ -857,9 +856,6 @@ int iface_setup_from_boot_context(struct
+ 		}
+ 
+ 		strlcpy(iface->netdev, context->iface, sizeof(iface->netdev));
+-#else
+-		return 0;
+-#endif
+ 	} else
+ 		return 0;
+ 
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_net_util.c open-iscsi-2.0-872-rc4-bnx2i.test/usr/iscsi_net_util.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_net_util.c	2011-09-08 15:27:24.000000000 -0500
++++ open-iscsi-2.0-872-rc4-bnx2i.test/usr/iscsi_net_util.c	2011-09-08 15:26:50.000000000 -0500
+@@ -39,12 +39,10 @@ struct iscsi_net_driver {
+ };
+ 
+ static struct iscsi_net_driver net_drivers[] = {
+-#ifdef OFFLOAD_BOOT_SUPPORTED
+ 	{"cxgb3", "cxgb3i" },
+ 	{"cxgb4", "cxgb4i" },
+ 	{"bnx2", "bnx2i" },
+ 	{"bnx2x", "bnx2i"},
+-#endif
+ 	{NULL, NULL}
+ };
+ 

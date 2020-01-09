@@ -1,0 +1,127 @@
+From bec9f085975988d0c83b54eb1bb3988d8a793223 Mon Sep 17 00:00:00 2001
+From: Mike Christie <michaelc@cs.wisc.edu>
+Date: Fri, 14 Dec 2012 12:40:27 -0600
+Subject: [PATCH 1/6] minor fixes and staying in synch with upstream on style
+
+iscsi tools: fix get_random_bytes error handling
+
+Bug report from Rahul:
+
+There seems to be a bug in function get_random_bytes(). I reported
+this earlier as well but somehow it didn't appear here.
+
+get_random_bytes(unsigned char *data, unsigned int length)
+{
+	long r;
+        unsigned n;
+	int fd;
+
+	fd = open("/dev/urandom", O_RDONLY);
+        	while (length > 0) {
+
+	if (!fd || read(fd, &r, sizeof(long)) != -1)      <<<< the condition is
+incorrect
+
+iscsi tools: fix ipv6 ibft/firmware boot
+
+The address buffers are too short for many ipv6 addresses
+and if ibft/firmware gives us a hostname. As a result iscsistart
+and iscsiadm were printing/getting a truncated address which
+would cause login and network startup to fail.
+---
+ include/fw_context.h        | 15 ++++++++-------
+ usr/auth.c                  |  8 ++++----
+ utils/fwparam_ibft/Makefile |  2 +-
+ 3 files changed, 13 insertions(+), 12 deletions(-)
+
+diff --git a/include/fw_context.h b/include/fw_context.h
+index f601cfd..1640859 100644
+--- a/include/fw_context.h
++++ b/include/fw_context.h
+@@ -21,6 +21,7 @@
+ #ifndef FWPARAM_CONTEXT_H_
+ #define FWPARAM_CONTEXT_H_
+ 
++#include <netdb.h>
+ #include <net/if.h>
+ 
+ #include "iscsi_proto.h"
+@@ -33,7 +34,7 @@ struct boot_context {
+ 	/* target settings */
+ 	int target_port;
+ 	char targetname[TARGET_NAME_MAXLEN + 1];
+-	char target_ipaddr[256];
++	char target_ipaddr[NI_MAXHOST];
+ 	char chap_name[AUTH_STR_MAX_LEN];
+ 	char chap_password[AUTH_STR_MAX_LEN];
+ 	char chap_name_in[AUTH_STR_MAX_LEN];
+@@ -44,14 +45,14 @@ struct boot_context {
+ 	char initiatorname[TARGET_NAME_MAXLEN + 1];
+ 
+ 	/* network settings */
+-	char dhcp[256];
++	char dhcp[NI_MAXHOST];
+ 	char iface[IF_NAMESIZE];
+ 	char mac[18];
+-	char ipaddr[256];
+-	char gateway[256];
+-	char primary_dns[256];
+-	char secondary_dns[256];
+-	char mask[256];
++	char ipaddr[NI_MAXHOST];
++	char gateway[NI_MAXHOST];
++	char primary_dns[NI_MAXHOST];
++	char secondary_dns[NI_MAXHOST];
++	char mask[NI_MAXHOST];
+ 	char lun[17];
+ 	char vlan[15];
+ 
+diff --git a/usr/auth.c b/usr/auth.c
+index c924545..4ff0425 100644
+--- a/usr/auth.c
++++ b/usr/auth.c
+@@ -189,24 +189,24 @@ get_random_bytes(unsigned char *data, unsigned int length)
+ 
+ 	long r;
+         unsigned n;
+-	int fd;
++	int fd, r_size = sizeof(r);
+ 
+ 	fd = open("/dev/urandom", O_RDONLY);
+         while (length > 0) {
+ 
+-		if (!fd || read(fd, &r, sizeof(long)) != -1)
++		if (fd == -1 || read(fd, &r, r_size) != r_size)
+ 			r = rand();
+                 r = r ^ (r >> 8);
+                 r = r ^ (r >> 4);
+                 n = r & 0x7;
+ 
+-		if (!fd || read(fd, &r, sizeof(long)) != -1)
++		if (fd == -1 || read(fd, &r, r_size) != r_size)
+ 			r = rand();
+                 r = r ^ (r >> 8);
+                 r = r ^ (r >> 5);
+                 n = (n << 3) | (r & 0x7);
+ 
+-		if (!fd || read(fd, &r, sizeof(long)) != -1)
++		if (fd == -1 || read(fd, &r, r_size) != r_size)
+ 			r = rand();
+                 r = r ^ (r >> 8);
+                 r = r ^ (r >> 5);
+diff --git a/utils/fwparam_ibft/Makefile b/utils/fwparam_ibft/Makefile
+index ca07b76..c72bb7f 100644
+--- a/utils/fwparam_ibft/Makefile
++++ b/utils/fwparam_ibft/Makefile
+@@ -28,7 +28,7 @@ CLEANFILES = $(OBJS) *.output *~
+ 
+ OPTFLAGS ?= -O2 -g -fPIC
+ WARNFLAGS ?= -Wall -Wstrict-prototypes
+-CFLAGS += $(OPTFLAGS) $(WARNFLAGS) -I../../include -I../../usr
++CFLAGS += $(OPTFLAGS) $(WARNFLAGS) -I../../include -I../../usr -D_GNU_SOURCE
+ 
+ all: $(OBJS)
+ 
+-- 
+1.8.1.4
+

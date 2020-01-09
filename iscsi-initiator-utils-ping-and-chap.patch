@@ -1,0 +1,1136 @@
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/doc/iscsiadm.8 open-iscsi-2.0-872-rc4-bnx2i.work/doc/iscsiadm.8
+--- open-iscsi-2.0-872-rc4-bnx2i/doc/iscsiadm.8	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/doc/iscsiadm.8	2012-03-06 05:22:26.000000000 -0600
+@@ -12,11 +12,11 @@ iscsiadm \- open-iscsi administration ut
+ 
+ \fBiscsiadm\fR \-m session [ \-hV ] [ \-d debug_level ] [ \-P printlevel ] [ \-r sessionid | sysfsdir [ \-R ] [ \-u | \-s | \-o new ] ]
+ 
+-\fBiscsiadm\fR \-m iface [ \-hV ] [ \-d debug_level ] [ \-P printlevel ] [ \-I ifacename | \-H hostno|MAC ]   [ [ \-o  operation  ] [ \-n name ] [ \-v value ] ]
++\fBiscsiadm\fR \-m iface [ \-hV ] [ \-d debug_level ] [ \-P printlevel ] [ \-I ifacename | \-H hostno|MAC ]   [ [ \-o  operation  ] [ \-n name ] [ \-v value ] ] [ \-C ping [ \-a ip ] [ \-b packetsize ] [ \-c count ] [ \-i interval ] ]
+ 
+ \fBiscsiadm\fR \-m fw [\-l]
+ 
+-\fBiscsiadm\fR \-m host [ \-P printlevel ] [ \-H hostno|MAC ]
++\fBiscsiadm\fR \-m host [ \-P printlevel ] [ \-H hostno|MAC ] [ -C chap [ -o operation ] [ -v chap_tbl_idx ] ]
+ 
+ \fBiscsiadm\fR \-k priority
+ 
+@@ -41,6 +41,32 @@ daemon (iscsid) be running.
+ .SH OPTIONS
+ 
+ .TP
++\fB\-a\fR, \fB\-\-ip=\fIipaddr\fP
++\fIipaddr\fR can be IPv4 or IPv6.
++
++This option is only valid for ping submode.
++
++.TP
++\fB\-b\fR, \fB\-\-packetsize=\fIpacketsize\fP
++Specify the ping \fIpacketsize\fR.
++
++This option is only valid for ping submode.
++
++.TP
++\fB\-c\fR, \fB\-\-count=\fIcount\fP
++\fIcount\fR specify number of ping iterations.
++
++This option is only valid for ping submode.
++
++.TP
++\fB\-C\fR, \fB\-\-submode=\fIop\fP
++Specify the submode for mode. op must be name of submode.
++
++Currently iscsiadm support ping as submode for iface. For example,
++
++iscsiadm -m iface -I ifacename -C ping -a ipaddr -b packetsize -c count -i interval
++
++.TP
+ \fB\-d\fR, \fB\-\-debug=\fIdebug_level\fP
+ print debugging information. Valid values for debug_level are 0 to 8.
+ 
+@@ -55,6 +81,12 @@ the scsi host number assigned to the hos
+ MAC address of a scsi host.
+ 
+ .TP
++\fB\-i\fR, \fB\-\-interval=\fIinterval\fP
++\fIinterval\fP specify delay between two ping iterations.
++
++This option is only valid for ping submode.
++
++.TP
+ \fB\-I\fR, \fB\-\-interface=\fI[iface]\fR
+ The interface argument specifies the iSCSI interface to use for the operation.
+ iSCSI interfaces (iface) are defined in /var/lib/iscsi/ifaces. For hardware
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/include/iscsi_err.h open-iscsi-2.0-872-rc4-bnx2i.work/include/iscsi_err.h
+--- open-iscsi-2.0-872-rc4-bnx2i/include/iscsi_err.h	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/include/iscsi_err.h	2012-03-06 05:22:26.000000000 -0600
+@@ -58,6 +58,10 @@ enum {
+ 	ISCSI_ERR_ISNS_QUERY		= 25,
+ 	/* iSNS registration/deregistration failed */
+ 	ISCSI_ERR_ISNS_REG_FAILED	= 26,
++	/* operation not supported */
++	ISCSI_ERR_OP_NOT_SUPP		= 27,
++	/* device or resource in use */
++	ISCSI_ERR_BUSY			= 28,
+ 
+ 	/* Always last. Indicates end of error code space */
+ 	ISCSI_MAX_ERR_VAL,
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/include/iscsi_if.h open-iscsi-2.0-872-rc4-bnx2i.work/include/iscsi_if.h
+--- open-iscsi-2.0-872-rc4-bnx2i/include/iscsi_if.h	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/include/iscsi_if.h	2012-03-06 05:22:26.000000000 -0600
+@@ -65,8 +65,11 @@ enum iscsi_uevent_e {
+ 
+ 	ISCSI_UEVENT_PATH_UPDATE	= UEVENT_BASE + 20,
+ 	ISCSI_UEVENT_SET_IFACE_PARAMS	= UEVENT_BASE + 21,
++	ISCSI_UEVENT_PING		= UEVENT_BASE + 22,
++	ISCSI_UEVENT_GET_CHAP		= UEVENT_BASE + 23,
++	ISCSI_UEVENT_DELETE_CHAP	= UEVENT_BASE + 24,
+ 
+-	ISCSI_UEVENT_MAX		= ISCSI_UEVENT_SET_IFACE_PARAMS,
++	ISCSI_UEVENT_MAX		= ISCSI_UEVENT_DELETE_CHAP,
+ 
+ 	/* up events */
+ 	ISCSI_KEVENT_RECV_PDU		= KEVENT_BASE + 1,
+@@ -80,8 +83,9 @@ enum iscsi_uevent_e {
+ 	ISCSI_KEVENT_IF_DOWN		= KEVENT_BASE + 8,
+ 	ISCSI_KEVENT_CONN_LOGIN_STATE   = KEVENT_BASE + 9,
+ 	ISCSI_KEVENT_HOST_EVENT		= KEVENT_BASE + 10,
++	ISCSI_KEVENT_PING_COMP		= KEVENT_BASE + 11,
+ 
+-	ISCSI_KEVENT_MAX		= ISCSI_KEVENT_HOST_EVENT,
++	ISCSI_KEVENT_MAX		= ISCSI_KEVENT_PING_COMP,
+ };
+ 
+ enum iscsi_tgt_dscvr {
+@@ -195,6 +199,26 @@ struct iscsi_uevent {
+ 			uint32_t	host_no;
+ 			uint32_t	count;
+ 		} set_iface_params;
++		struct msg_iscsi_ping {
++			uint32_t	host_no;
++			uint32_t	iface_num;
++			uint32_t	iface_type;
++			uint32_t	payload_size;
++			uint32_t	pid;	/* unique ping id associated
++						   with each ping request */
++		} iscsi_ping;
++		struct msg_get_chap {
++			uint32_t	host_no;
++			uint32_t	num_entries; /* number of CHAP entries
++						      * on request, number of
++						      * valid CHAP entries on
++						      * response */
++			uint16_t	chap_tbl_idx;
++		} get_chap;
++		struct msg_delete_chap {
++			uint32_t	host_no;
++			uint16_t	chap_tbl_idx;
++		} delete_chap;
+ 	} u;
+ 	union {
+ 		/* messages k -> u */
+@@ -244,6 +268,13 @@ struct iscsi_uevent {
+ 			uint32_t	data_size;
+ 			enum iscsi_host_event_code code;
+ 		} host_event;
++		struct msg_ping_comp {
++			uint32_t	host_no;
++			uint32_t	status;
++			uint32_t	pid;	/* unique ping id associated
++						   with each ping request */
++			uint32_t	data_size;
++		} ping_comp;
+ 	} r;
+ } __attribute__ ((aligned (sizeof(uint64_t))));
+ 
+@@ -566,4 +597,20 @@ struct iscsi_stats {
+ 		__attribute__ ((aligned (sizeof(uint64_t))));
+ };
+ 
++enum chap_type_e {
++	CHAP_TYPE_OUT,
++	CHAP_TYPE_IN,
++};
++
++#define ISCSI_CHAP_AUTH_NAME_MAX_LEN	256
++#define ISCSI_CHAP_AUTH_SECRET_MAX_LEN	256
++
++struct iscsi_chap_rec {
++	uint16_t chap_tbl_idx;
++	enum chap_type_e chap_type;
++	char username[ISCSI_CHAP_AUTH_NAME_MAX_LEN];
++	uint8_t password[ISCSI_CHAP_AUTH_SECRET_MAX_LEN];
++	uint8_t password_length;
++};
++
+ #endif
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/README open-iscsi-2.0-872-rc4-bnx2i.work/README
+--- open-iscsi-2.0-872-rc4-bnx2i/README	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/README	2012-03-06 05:22:26.000000000 -0600
+@@ -366,7 +366,9 @@ Usage: iscsiadm [OPTION]
+ 			  iscsi_ifacename.
+ 
+ 			  See below for examples.
+-  -m host --host=hostno|MAC --print=level
++  -m iface --interface=iscsi_ifacename -C ping --ip=[ipaddr] --packetsize=[size]
++				--count=[count] --interval=[interval]
++  -m host --host=hostno|MAC --print=level -C chap --op=[op] --value=[chap_tbl_idx]
+ 			  Display information for a specific host. The host
+ 			  can be passed in by host number or by MAC address.
+ 			  If a host is not passed in then info
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/host.h open-iscsi-2.0-872-rc4-bnx2i.work/usr/host.h
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/host.h	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/host.h	2012-03-06 05:22:26.000000000 -0600
+@@ -5,6 +5,9 @@
+ #include "types.h"
+ #include "config.h"
+ 
++#define MAX_CHAP_BUF_SZ 4096
++#define REQ_CHAP_BUF_SZ (MAX_CHAP_BUF_SZ + sizeof(struct iscsi_uevent))
++
+ struct host_info {
+         struct iface_rec iface;
+         uint32_t host_no;
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/idbm.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/idbm.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/idbm.c	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/idbm.c	2012-03-06 05:22:26.000000000 -0600
+@@ -449,6 +449,30 @@ void idbm_recinfo_iface(iface_rec_t *r,
+ 	__recinfo_uint16(IFACE_PORT, ri, r, port, IDBM_SHOW, num, 1);
+ }
+ 
++static void idbm_recinfo_host_chap(struct iscsi_chap_rec *r, recinfo_t *ri)
++{
++	int num = 0;
++
++	__recinfo_uint16(HOST_AUTH_INDEX, ri, r, chap_tbl_idx, IDBM_SHOW,
++			 num, 1);
++
++	if (r->chap_type == CHAP_TYPE_OUT) {
++		__recinfo_str(HOST_AUTH_USERNAME, ri, r, username, IDBM_SHOW,
++			      num, 0);
++		__recinfo_str(HOST_AUTH_PASSWORD, ri, r, password, IDBM_MASKED,
++			      num, 1);
++		__recinfo_int(HOST_AUTH_PASSWORD_LEN, ri, r, password_length,
++			      IDBM_HIDE, num, 1);
++	} else {
++		__recinfo_str(HOST_AUTH_USERNAME_IN, ri, r, username, IDBM_SHOW,
++			      num, 0);
++		__recinfo_str(HOST_AUTH_PASSWORD_IN, ri, r, password,
++			      IDBM_MASKED, num, 1);
++		__recinfo_int(HOST_AUTH_PASSWORD_IN_LEN, ri, r, password_length,
++			      IDBM_HIDE, num, 1);
++	}
++}
++
+ recinfo_t *idbm_recinfo_alloc(int max_keys)
+ {
+ 	recinfo_t *info;
+@@ -479,6 +503,9 @@ void idbm_print(int type, void *rec, int
+ 	case IDBM_PRINT_TYPE_IFACE:
+ 		idbm_recinfo_iface((struct iface_rec *)rec, info);
+ 		break;
++	case IDBM_PRINT_TYPE_HOST_CHAP:
++		idbm_recinfo_host_chap((struct iscsi_chap_rec *)rec, info);
++		break;
+ 	}
+ 
+ 	fprintf(f, "%s\n", ISCSI_BEGIN_REC);
+@@ -849,6 +876,13 @@ int idbm_print_iface_info(void *data, st
+ 	return 0;
+ }
+ 
++int idbm_print_host_chap_info(struct iscsi_chap_rec *chap)
++{
++	/* User only calls this to print chap so always print */
++	idbm_print(IDBM_PRINT_TYPE_HOST_CHAP, chap, 1, stdout);
++	return 0;
++}
++
+ int idbm_print_node_flat(void *data, node_rec_t *rec)
+ {
+ 	if (strchr(rec->conn[0].address, '.'))
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/idbm_fields.h open-iscsi-2.0-872-rc4-bnx2i.work/usr/idbm_fields.h
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/idbm_fields.h	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/idbm_fields.h	2012-03-06 05:22:26.000000000 -0600
+@@ -116,4 +116,14 @@
+ #define DISC_ISNS_ADDR		"discovery.sendtargets.address"
+ #define DISC_ISNS_PORT		"discovery.sendtargets.port"
+ 
++/* host auth fields */
++#define HOST_AUTH_INDEX			"host.auth.tbl_idx"
++#define HOST_AUTH_METHOD		"host.auth.authmethod"
++#define HOST_AUTH_USERNAME		"host.auth.username"
++#define HOST_AUTH_PASSWORD		"host.auth.password"
++#define HOST_AUTH_PASSWORD_LEN		"host.auth.password_length"
++#define HOST_AUTH_USERNAME_IN		"host.auth.username_in"
++#define HOST_AUTH_PASSWORD_IN		"host.auth.password_in"
++#define HOST_AUTH_PASSWORD_IN_LEN	"host.auth.password_in_length"
++
+ #endif
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/idbm.h open-iscsi-2.0-872-rc4-bnx2i.work/usr/idbm.h
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/idbm.h	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/idbm.h	2012-03-06 05:22:26.000000000 -0600
+@@ -168,6 +168,7 @@ enum {
+ 	IDBM_PRINT_TYPE_DISCOVERY,
+ 	IDBM_PRINT_TYPE_NODE,
+ 	IDBM_PRINT_TYPE_IFACE,
++	IDBM_PRINT_TYPE_HOST_CHAP,
+ };
+ 
+ extern void idbm_print(int type, void *rec, int show, FILE *f);
+@@ -180,4 +181,6 @@ extern struct node_rec *idbm_create_rec(
+ extern struct node_rec *
+ idbm_create_rec_from_boot_context(struct boot_context *context);
+ 
++extern int idbm_print_host_chap_info(struct iscsi_chap_rec *chap);
++
+ #endif /* IDBM_H */
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iface.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/iface.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iface.c	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iface.c	2012-03-06 05:23:54.000000000 -0600
+@@ -425,12 +425,23 @@ int iface_get_by_net_binding(struct ifac
+ 	return ISCSI_ERR_NO_OBJS_FOUND;
+ }
+ 
+-static int iface_get_iptype(struct iface_rec *iface)
++int iface_get_iptype(struct iface_rec *iface)
+ {
+-	if (strcmp(iface->bootproto, "dhcp") && !strstr(iface->ipaddress, "."))
+-		return ISCSI_IFACE_TYPE_IPV6;
+-	else
+-		return ISCSI_IFACE_TYPE_IPV4;
++	/* address might not be set if user config with another tool */
++	if (!strlen(iface->ipaddress) ||
++	    !strcmp(UNKNOWN_VALUE, iface->ipaddress)) {
++		/* try to figure out by name */
++		if (strstr(iface->name, "ipv4"))
++			return ISCSI_IFACE_TYPE_IPV4;
++		else
++			return ISCSI_IFACE_TYPE_IPV6;
++	} else {
++		if (strcmp(iface->bootproto, "dhcp") &&
++		    !strstr(iface->ipaddress, "."))
++			return ISCSI_IFACE_TYPE_IPV6;
++		else
++			return ISCSI_IFACE_TYPE_IPV4;
++	}
+ }
+ 
+ static int iface_setup_binding_from_kern_iface(void *data,
+@@ -606,7 +617,7 @@ int iface_match(struct iface_rec *patter
+ 		return 1;
+ 
+ 	if (!strcmp(pattern->name, iface->name)) {
+-		if (strcmp(pattern->name, DEFAULT_IFACENAME))
++		if (!strcmp(pattern->name, DEFAULT_IFACENAME))
+ 			return 1;
+ 		/*
+ 		 * For default we allow the same name, but different
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iface.h open-iscsi-2.0-872-rc4-bnx2i.work/usr/iface.h
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iface.h	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iface.h	2012-03-06 05:22:26.000000000 -0600
+@@ -60,6 +60,7 @@ extern int iface_get_param_count(struct
+ 				 int iface_all);
+ extern int iface_build_net_config(struct iface_rec *iface_primary,
+ 				  int iface_all, struct iovec *iovs);
++extern int iface_get_iptype(struct iface_rec *iface);
+ 
+ #define iface_fmt "[hw=%s,ip=%s,net_if=%s,iscsi_if=%s]"
+ #define iface_str(_iface) \
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iscsiadm.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsiadm.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iscsiadm.c	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsiadm.c	2012-03-06 05:23:31.000000000 -0600
+@@ -27,6 +27,7 @@
+ #include <unistd.h>
+ #include <string.h>
+ #include <signal.h>
++#include <time.h>
+ #include <sys/stat.h>
+ 
+ #include "initiator.h"
+@@ -51,6 +52,7 @@
+ #include "isns-proto.h"
+ #include "iscsi_err.h"
+ #include "iscsi_ipc.h"
++#include "iscsi_timer.h"
+ 
+ static char program_name[] = "iscsiadm";
+ static char config_file[TARGET_NAME_MAXLEN];
+@@ -64,6 +66,8 @@ enum iscsiadm_mode {
+ 	MODE_HOST,
+ 	MODE_IFACE,
+ 	MODE_FW,
++	MODE_PING,
++	MODE_CHAP
+ };
+ 
+ enum iscsiadm_op {
+@@ -102,9 +106,13 @@ static struct option const long_options[
+ 	{"show", no_argument, NULL, 'S'},
+ 	{"version", no_argument, NULL, 'V'},
+ 	{"help", no_argument, NULL, 'h'},
++	{"submode", required_argument, NULL, 'C'},
++	{"ip", required_argument, NULL, 'a'},
++	{"packetsize", required_argument, NULL, 'b'},
++	{"count", required_argument, NULL, 'c'},
+ 	{NULL, 0, NULL, 0},
+ };
+-static char *short_options = "RlDVhm:p:P:T:H:I:U:k:L:d:r:n:v:o:sSt:u";
++static char *short_options = "RlDVhm:a:b:c:C:p:P:T:H:i:I:U:k:L:d:r:n:v:o:sSt:u";
+ 
+ static void usage(int status)
+ {
+@@ -116,12 +124,12 @@ static void usage(int status)
+ iscsiadm -m discoverydb [ -hV ] [ -d debug_level ] [-P printlevel] [ -t type -p ip:port -I ifaceN ... [ -Dl ] ] | [ [ -p ip:port -t type] \
+ [ -o operation ] [ -n name ] [ -v value ] [ -lD ] ] \n\
+ iscsiadm -m discovery [ -hV ] [ -d debug_level ] [-P printlevel] [ -t type -p ip:port -I ifaceN ... [ -l ] ] | [ [ -p ip:port ] [ -l | -D ] ] \n\
+-iiscsiadm -m node [ -hV ] [ -d debug_level ] [ -P printlevel ] [ -L all,manual,automatic ] [ -U all,manual,automatic ] [ -S ] [ [ -T targetname -p ip:port -I ifaceN ] [ -l | -u | -R | -s] ] \
++iscsiadm -m node [ -hV ] [ -d debug_level ] [ -P printlevel ] [ -L all,manual,automatic ] [ -U all,manual,automatic ] [ -S ] [ [ -T targetname -p ip:port -I ifaceN ] [ -l | -u | -R | -s] ] \
+ [ [ -o  operation  ] [ -n name ] [ -v value ] ]\n\
+ iscsiadm -m session [ -hV ] [ -d debug_level ] [ -P  printlevel] [ -r sessionid | sysfsdir [ -R | -u | -s ] [ -o operation ] [ -n name ] [ -v value ] ]\n\
+-iscsiadm -m iface [ -hV ] [ -d debug_level ] [ -P printlevel ] [ -I ifacename | -H hostno|MAC ] [ [ -o  operation  ] [ -n name ] [ -v value ] ]\n\
++iscsiadm -m iface [ -hV ] [ -d debug_level ] [ -P printlevel ] [ -I ifacename | -H hostno|MAC ] [ [ -o  operation  ] [ -n name ] [ -v value ] ] [ -C ping [ -a ip ] [ -b packetsize ] [ -c count ] [ -i interval ] ]\n\
+ iscsiadm -m fw [ -l ]\n\
+-iscsiadm -m host [ -P printlevel ] [ -H hostno|MAC ]\n\
++iscsiadm -m host [ -P printlevel ] [ -H hostno|MAC ] [ -C chap [ -o operation ] [ -v chap_tbl_idx ] ]\n\
+ iscsiadm -k priority\n");
+ 	}
+ 	exit(status);
+@@ -178,6 +186,21 @@ str_to_mode(char *str)
+ }
+ 
+ static int
++str_to_submode(char *str)
++{
++	int sub_mode;
++
++	if (!strcmp("ping", str))
++		sub_mode = MODE_PING;
++	else if (!strcmp("chap", str))
++		sub_mode = MODE_CHAP;
++	else
++		sub_mode = -1;
++
++	return sub_mode;
++}
++
++static int
+ str_to_type(char *str)
+ {
+ 	int type;
+@@ -1277,6 +1300,146 @@ free_buf:
+ 	return ISCSI_SUCCESS;
+ }
+ 
++static int get_host_chap_info(uint32_t host_no)
++{
++	struct iscsi_transport *t = NULL;
++	struct iscsi_chap_rec *crec = NULL;
++	char *req_buf = NULL;
++	uint32_t valid_chap_entries;
++	uint32_t num_entries;
++	uint16_t chap_tbl_idx = 0;
++	int rc = 0;
++	int fd, i = 0;
++
++	t = iscsi_sysfs_get_transport_by_hba(host_no);
++	if (!t) {
++		log_error("Could not match hostno %d to "
++			  "transport.", host_no);
++		rc = ISCSI_ERR_TRANS_NOT_FOUND;
++		goto exit_chap_info;
++	}
++
++	num_entries = MAX_CHAP_BUF_SZ / sizeof(*crec);
++
++	req_buf = calloc(1, REQ_CHAP_BUF_SZ);
++	if (!req_buf) {
++		log_error("Could not allocate memory for CHAP request.");
++		rc = ISCSI_ERR_NOMEM;
++		goto exit_chap_info;
++	}
++
++	fd = ipc->ctldev_open();
++	if (fd < 0) {
++		rc = ISCSI_ERR_INTERNAL;
++		log_error("Netlink open failed.");
++		goto exit_chap_info;
++	}
++
++get_chap:
++	memset(req_buf, 0, REQ_CHAP_BUF_SZ);
++
++	rc = ipc->get_chap(t->handle, host_no, chap_tbl_idx, num_entries,
++			   req_buf, &valid_chap_entries);
++	if (rc < 0) {
++		log_error("get_chap_info failed. errno=%d", errno);
++		rc = ISCSI_ERR;
++		goto exit_chap_info;
++	}
++
++	log_info("Valid CHAP Entries = %d\n", valid_chap_entries);
++
++	crec = (struct iscsi_chap_rec *) (req_buf +
++					  sizeof(struct iscsi_uevent));
++
++	if (valid_chap_entries)
++		chap_tbl_idx =
++		(crec + (valid_chap_entries - 1))->chap_tbl_idx + 1;
++
++	/* print chap info */
++	for (i = 0; i < valid_chap_entries; i++) {
++		idbm_print_host_chap_info(crec);
++		crec++;
++	}
++
++	if (valid_chap_entries != num_entries)
++		goto exit_chap_info;
++	else
++		goto get_chap;
++
++	ipc->ctldev_close();
++
++exit_chap_info:
++	if (req_buf)
++		free(req_buf);
++
++	return rc;
++}
++
++static int delete_host_chap_info(uint32_t host_no, char *value)
++{
++	struct iscsi_transport *t = NULL;
++	int fd, rc = 0;
++	uint16_t chap_tbl_idx;
++
++	if (!value) {
++		log_error("CHAP deletion requires --value=table_index.");
++		return ISCSI_ERR_INVAL;
++	}
++
++	chap_tbl_idx = (uint16_t)atoi(value);
++
++	t = iscsi_sysfs_get_transport_by_hba(host_no);
++	if (!t) {
++		log_error("Could not match hostno %d to "
++			  "transport.", host_no);
++		rc = ISCSI_ERR_TRANS_NOT_FOUND;
++		goto exit_delete_chap;
++	}
++
++	fd = ipc->ctldev_open();
++	if (fd < 0) {
++		log_error("Netlink open failed.");
++		rc = ISCSI_ERR_INTERNAL;
++		goto exit_delete_chap;
++	}
++
++	log_info("Deleteing CHAP index: %d\n", chap_tbl_idx);
++	rc = ipc->delete_chap(t->handle, host_no, chap_tbl_idx);
++	if (rc < 0) {
++		log_error("CHAP Delete failed.");
++		if (rc == -EBUSY) {
++			rc = ISCSI_ERR_BUSY;
++			log_error("CHAP index %d is in use.", chap_tbl_idx);
++		} else
++			rc = ISCSI_ERR;
++	}
++
++	ipc->ctldev_close();
++
++exit_delete_chap:
++	return rc;
++}
++
++static int exec_host_chap_op(int op, int info_level, uint32_t host_no,
++			     char *value)
++{
++	int rc = ISCSI_ERR_INVAL;
++
++	switch (op) {
++	case OP_SHOW:
++		rc = get_host_chap_info(host_no);
++		break;
++	case OP_DELETE:
++		rc = delete_host_chap_info(host_no, value);
++		break;
++	default:
++		log_error("Invalid operation.");
++		break;
++	}
++
++	return rc;
++}
++
+ /* TODO: merge iter helpers and clean them up, so we can use them here */
+ static int exec_iface_op(int op, int do_show, int info_level,
+ 			 struct iface_rec *iface, uint32_t host_no,
+@@ -2082,6 +2245,101 @@ static uint32_t parse_host_info(char *op
+ 	return host_no;
+ }
+ 
++static int exec_ping_op(struct iface_rec *iface, char *ip, int size, int count,
++			int interval)
++{
++	int rc = ISCSI_ERR;
++	uint32_t iface_type = ISCSI_IFACE_TYPE_IPV4;
++	struct iscsi_transport *t = NULL;
++	uint32_t host_no;
++	struct sockaddr_storage addr;
++	int i;
++
++	if (!iface) {
++		log_error("Ping requires iface.");
++		rc = ISCSI_ERR_INVAL;
++		goto ping_exit;
++	}
++
++	if (!ip) {
++		log_error("Ping requires destination ipaddress.");
++		rc = ISCSI_ERR_INVAL;
++		goto ping_exit;
++	}
++
++	if (size <= 0) {
++		log_error("Invalid packet size: %d.", size);
++		rc = ISCSI_ERR_INVAL;
++		goto ping_exit;
++	}
++
++	if (count <= 0) {
++		log_error("Invalid number of packets to transmit: %d.", count);
++		rc = ISCSI_ERR_INVAL;
++		goto ping_exit;
++	}
++
++	if (interval < 0) {
++		log_error("Invalid timing interval: %d.", interval);
++		rc = ISCSI_ERR_INVAL;
++		goto ping_exit;
++	}
++
++	rc = iface_conf_read(iface);
++	if (rc) {
++		log_error("Could not read iface %s (%d).", iface->name, rc);
++		goto ping_exit;
++	}
++
++
++	iface_type = iface_get_iptype(iface);
++
++	t = iscsi_sysfs_get_transport_by_name(iface->transport_name);
++	if (!t) {
++		log_error("Can't find transport.");
++		rc = ISCSI_ERR_INVAL;
++		goto ping_exit;
++	}
++
++	host_no = iscsi_sysfs_get_host_no_from_hwinfo(iface, &rc);
++	if (host_no == -1) {
++		log_error("Can't find host_no.");
++		rc = ISCSI_ERR_INVAL;
++		goto ping_exit;
++	}
++
++	rc = resolve_address(ip, NULL, &addr);
++	if (rc) {
++		log_error("Invalid IP address.");
++		rc = ISCSI_ERR_INVAL;
++		goto ping_exit;
++	}
++
++	/* TODO: move this. It is needed by interface for pid */
++	srand(time(NULL));
++
++	for (i = 1; i <= count; i++) {
++		/*
++		 * To support drivers like bnx2i that do not use
++		 * the iscsi if to send a ping, we can add a transport
++		 * callout here.
++		 */
++		rc = ipc->exec_ping(t->handle, host_no,
++				    (struct sockaddr *)&addr, iface->iface_num,
++				    iface_type, size);
++		if (!rc)
++			printf("Ping %d completed\n", i);
++		else
++			printf("Ping %d failed: %s\n", i, iscsi_err_to_str(rc));
++
++		if (i < count)
++			sleep(interval);
++	}
++
++ping_exit:
++	return rc;
++}
++
+ int
+ main(int argc, char **argv)
+ {
+@@ -2091,7 +2349,8 @@ main(int argc, char **argv)
+ 	int rc=0, sid=-1, op=OP_NOOP, type=-1, do_logout=0, do_stats=0;
+ 	int do_login_all=0, do_logout_all=0, info_level=-1, num_ifaces = 0;
+ 	int tpgt = PORTAL_GROUP_TAG_UNKNOWN, killiscsid=-1, do_show=0;
+-	int do_discover = 0;
++	int packet_size=32, ping_count=1, ping_interval=0;
++	int do_discover = 0, sub_mode = -1;
+ 	struct sigaction sa_old;
+ 	struct sigaction sa_new;
+ 	struct list_head ifaces;
+@@ -2196,12 +2455,27 @@ main(int argc, char **argv)
+ 		case 'm':
+ 			mode = str_to_mode(optarg);
+ 			break;
++		case 'C':
++			sub_mode = str_to_submode(optarg);
++			break;
+ 		case 'T':
+ 			targetname = optarg;
+ 			break;
+ 		case 'p':
+ 			ip = str_to_ipport(optarg, &port, &tpgt);
+ 			break;
++		case 'a':
++			ip = optarg;
++			break;
++		case 'b':
++			packet_size = atoi(optarg);
++			break;
++		case 'c':
++			ping_count = atoi(optarg);
++			break;
++		case 'i':
++			ping_interval = atoi(optarg);
++			break;
+ 		case 'I':
+ 			iface = iface_alloc(optarg, &rc);
+ 			if (rc == ISCSI_ERR_INVAL) {
+@@ -2262,19 +2536,35 @@ main(int argc, char **argv)
+ 
+ 	switch (mode) {
+ 	case MODE_HOST:
+-		if ((rc = verify_mode_params(argc, argv, "HdmP", 0))) {
++		if ((rc = verify_mode_params(argc, argv, "CHdmPov", 0))) {
+ 			log_error("host mode: option '-%c' is not "
+ 				  "allowed/supported", rc);
+ 			rc = ISCSI_ERR_INVAL;
+ 			goto out;
+ 		}
+-
+-		rc = host_info_print(info_level, host_no);
++		if (sub_mode != -1) {
++			switch (sub_mode) {
++			case MODE_CHAP:
++				if (!op || !host_no) {
++					log_error("CHAP mode requires host "
++						"no and valid operation");
++					rc = ISCSI_ERR_INVAL;
++					break;
++				}
++				rc = exec_host_chap_op(op, info_level, host_no,
++						       value);
++				break;
++			default:
++				log_error("Invalid Sub Mode");
++				break;
++			}
++		} else
++			rc = host_info_print(info_level, host_no);
+ 		break;
+ 	case MODE_IFACE:
+ 		iface_setup_host_bindings();
+ 
+-		if ((rc = verify_mode_params(argc, argv, "HIdnvmPo", 0))) {
++		if ((rc = verify_mode_params(argc, argv, "HIdnvmPoCabci", 0))) {
+ 			log_error("iface mode: option '-%c' is not "
+ 				  "allowed/supported", rc);
+ 			rc = ISCSI_ERR_INVAL;
+@@ -2289,8 +2579,14 @@ main(int argc, char **argv)
+ 					  "interface. Using the first one "
+ 					  "%s.", iface->name);
+ 		}
+-		rc = exec_iface_op(op, do_show, info_level, iface, host_no,
+-				   name, value);
++
++		if (sub_mode == MODE_PING)
++			rc = exec_ping_op(iface, ip, packet_size, ping_count,
++					  ping_interval);
++		else
++			rc = exec_iface_op(op, do_show, info_level, iface,
++					   host_no, name, value);
++
+ 		break;
+ 	case MODE_DISCOVERYDB:
+ 		if ((rc = verify_mode_params(argc, argv, "DSIPdmntplov", 0))) {
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_err.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_err.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_err.c	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_err.c	2012-03-06 05:22:26.000000000 -0600
+@@ -49,6 +49,8 @@ static char *iscsi_err_msgs[] = {
+ 	/* 24 */ "iSCSI login failed due to authorization failure",
+ 	/* 25 */ "iSNS query failed",
+ 	/* 26 */ "iSNS registration failed",
++	/* 27 */ "operation not supported",
++	/* 28 */ "device or resource in use",
+ };
+ 
+ char *iscsi_err_to_str(int err)
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_ipc.h open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_ipc.h
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/iscsi_ipc.h	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/iscsi_ipc.h	2012-03-06 05:22:26.000000000 -0600
+@@ -134,6 +134,17 @@ struct iscsi_ipc {
+ 			       struct iovec *iovs, uint32_t param_count);
+ 
+ 	int (*recv_conn_state) (struct iscsi_conn *conn, uint32_t *state);
++
++	int (*exec_ping) (uint64_t transport_handle, uint32_t host_no,
++			  struct sockaddr *addr, uint32_t iface_num,
++			  uint32_t iface_type, uint32_t size);
++
++	int (*get_chap) (uint64_t transport_handle, uint32_t host_no,
++			 uint16_t chap_tbl_idx, uint32_t num_entries,
++			 char *chap_buf, uint32_t *valid_chap_entries);
++
++	int (*delete_chap) (uint64_t transport_handle, uint32_t host_no,
++			    uint16_t chap_tbl_idx);
+ };
+ 
+ struct iscsi_ipc *ipc;
+diff -aurp open-iscsi-2.0-872-rc4-bnx2i/usr/netlink.c open-iscsi-2.0-872-rc4-bnx2i.work/usr/netlink.c
+--- open-iscsi-2.0-872-rc4-bnx2i/usr/netlink.c	2012-03-06 05:22:41.000000000 -0600
++++ open-iscsi-2.0-872-rc4-bnx2i.work/usr/netlink.c	2012-03-06 05:23:02.000000000 -0600
+@@ -25,10 +25,12 @@
+ #include <unistd.h>
+ #include <stdint.h>
+ #include <errno.h>
++#include <time.h>
+ #include <inttypes.h>
+ #include <asm/types.h>
+ #include <sys/socket.h>
+ #include <sys/types.h>
++#include <sys/poll.h>
+ #include <linux/netlink.h>
+ 
+ #include "types.h"
+@@ -39,6 +41,8 @@
+ #include "iscsi_sysfs.h"
+ #include "transport.h"
+ #include "iscsi_netlink.h"
++#include "iscsi_err.h"
++#include "iscsi_timer.h"
+ 
+ static int ctrl_fd;
+ static struct sockaddr_nl src_addr, dest_addr;
+@@ -64,6 +68,15 @@ static int ctldev_handle(void);
+ 
+ #define NLM_SETPARAM_DEFAULT_MAX (NI_MAXHOST + 1 + sizeof(struct iscsi_uevent))
+ 
++struct iscsi_ping_event {
++	uint32_t host_no;
++	uint32_t pid;
++	int32_t status;
++	int active;
++};
++
++struct iscsi_ping_event ping_event;
++
+ struct nlattr *iscsi_nla_alloc(uint16_t type, uint16_t len)
+ {
+ 	struct nlattr *attr;
+@@ -323,6 +336,9 @@ __kipc_call(struct iovec *iovp, int coun
+ 		} else if (ev->type == ISCSI_UEVENT_GET_STATS) {
+ 			/* kget_stats() will read */
+ 			return 0;
++		} else if (ev->type == ISCSI_UEVENT_GET_CHAP) {
++			/* kget_chap() will read */
++			return 0;
+ 		} else {
+ 			if ((rc = nlpayload_read(ctrl_fd, (void*)ev,
+ 						 sizeof(*ev), 0)) < 0) {
+@@ -1002,7 +1018,7 @@ kset_net_config(uint64_t transport_handl
+ 	return 0;
+ }
+ 
+-static int krecv_conn_state(struct iscsi_conn *conn, int *state)
++static int krecv_conn_state(struct iscsi_conn *conn, uint32_t *state)
+ {
+ 	int rc;
+ 
+@@ -1024,6 +1040,218 @@ exit:
+ 	return rc;
+ }
+ 
++
++
++
++static int
++ksend_ping(uint64_t transport_handle, uint32_t host_no, struct sockaddr *addr,
++	   uint32_t iface_num, uint32_t iface_type, uint32_t pid, uint32_t size)
++{
++	int rc, addrlen;
++	struct iscsi_uevent *ev;
++	struct iovec iov[2];
++
++	log_debug(8, "in %s", __FUNCTION__);
++
++	memset(setparam_buf, 0, NLM_SETPARAM_DEFAULT_MAX);
++	ev = (struct iscsi_uevent *)setparam_buf;
++	ev->type = ISCSI_UEVENT_PING;
++	ev->transport_handle = transport_handle;
++	ev->u.iscsi_ping.host_no = host_no;
++	ev->u.iscsi_ping.iface_num = iface_num;
++	ev->u.iscsi_ping.iface_type = iface_type;
++	ev->u.iscsi_ping.payload_size = size;
++	ev->u.iscsi_ping.pid = pid;
++
++	if (addr->sa_family == PF_INET)
++		addrlen = sizeof(struct sockaddr_in);
++	else if (addr->sa_family == PF_INET6)
++		addrlen = sizeof(struct sockaddr_in6);
++	else {
++		log_error("%s unknown addr family %d\n",
++			  __FUNCTION__, addr->sa_family);
++		return -EINVAL;
++	}
++	memcpy(setparam_buf + sizeof(*ev), addr, addrlen);
++
++	iov[1].iov_base = ev;
++	iov[1].iov_len = sizeof(*ev) + addrlen;
++	rc = __kipc_call(iov, 2);
++	if (rc < 0)
++		return rc;
++
++	return 0;
++}
++
++static int kexec_ping(uint64_t transport_handle, uint32_t host_no,
++		      struct sockaddr *addr, uint32_t iface_num,
++		      uint32_t iface_type, uint32_t size)
++{
++	struct pollfd pfd;
++	struct timeval ping_timer;
++	int timeout, fd, rc;
++	uint32_t pid;
++
++	fd = ipc->ctldev_open();
++	if (fd < 0) {
++		log_error("Could not open netlink socket.");
++		return ISCSI_ERR;
++	}
++
++	/* prepare to poll */
++	memset(&pfd, 0, sizeof(pfd));
++	pfd.fd = fd;
++	pfd.events = POLLIN | POLLPRI;
++
++	/* get unique ping id */
++	pid = rand();
++
++	rc = ksend_ping(transport_handle, host_no, addr, iface_num,
++			iface_type, pid, size);
++	if (rc != 0) {
++		switch (rc) {
++		case -ENOSYS:
++			rc = ISCSI_ERR_OP_NOT_SUPP;
++			break;
++		case -EINVAL:
++			rc = ISCSI_ERR_INVAL;
++			break;
++		default:
++			rc = ISCSI_ERR;
++		}
++		goto close_nl;
++	}
++
++	ping_event.host_no = -1;
++	ping_event.pid = -1;
++	ping_event.status = -1;
++	ping_event.active = -1;
++
++	iscsi_timer_set(&ping_timer, 30);
++
++	timeout = iscsi_timer_msecs_until(&ping_timer);
++
++	while (1) {
++		pfd.revents = 0;
++		rc = poll(&pfd, 1, timeout);
++
++		if (iscsi_timer_expired(&ping_timer)) {
++			rc = ISCSI_ERR_TRANS_TIMEOUT;
++			break;
++		}
++
++		if (rc > 0) {
++			if (pfd.revents & (POLLIN | POLLPRI)) {
++				timeout = iscsi_timer_msecs_until(&ping_timer);
++				rc = ipc->ctldev_handle();
++
++				if (ping_event.active != 1)
++					continue;
++
++				if (pid != ping_event.pid)
++					continue;
++
++				if (ping_event.status == 0)
++					rc = 0;
++				else
++					rc = ISCSI_ERR;
++				break;
++			}
++
++			if (pfd.revents & POLLHUP) {
++				rc = ISCSI_ERR_TRANS;
++				break;
++			}
++
++			if (pfd.revents & POLLNVAL) {
++				rc = ISCSI_ERR_INTERNAL;
++				break;
++			}
++
++			if (pfd.revents & POLLERR) {
++				rc = ISCSI_ERR_INTERNAL;
++				break;
++			}
++		} else if (rc < 0) {
++			rc = ISCSI_ERR_INTERNAL;
++			break;
++		}
++	}
++
++close_nl:
++	ipc->ctldev_close();
++	return rc;
++}
++
++static int kget_chap(uint64_t transport_handle, uint32_t host_no,
++		     uint16_t chap_tbl_idx, uint32_t num_entries,
++		     char *chap_buf, uint32_t *valid_chap_entries)
++{
++	int rc = 0;
++	int ev_size;
++	struct iscsi_uevent ev;
++	struct iovec iov[2];
++	char nlm_ev[NLMSG_SPACE(sizeof(struct iscsi_uevent))];
++	struct nlmsghdr *nlh;
++
++	memset(&ev, 0, sizeof(struct iscsi_uevent));
++
++	ev.type = ISCSI_UEVENT_GET_CHAP;
++	ev.transport_handle = transport_handle;
++	ev.u.get_chap.host_no = host_no;
++	ev.u.get_chap.chap_tbl_idx = chap_tbl_idx;
++	ev.u.get_chap.num_entries = num_entries;
++
++	iov[1].iov_base = &ev;
++	iov[1].iov_len = sizeof(ev);
++	rc = __kipc_call(iov, 2);
++	if (rc < 0)
++		return rc;
++
++	if ((rc = nl_read(ctrl_fd, nlm_ev,
++			  NLMSG_SPACE(sizeof(struct iscsi_uevent)),
++			  MSG_PEEK)) < 0) {
++		log_error("can not read nlm_ev, error %d", rc);
++		return rc;
++	}
++
++	nlh = (struct nlmsghdr *)nlm_ev;
++	ev_size = nlh->nlmsg_len - NLMSG_ALIGN(sizeof(struct nlmsghdr));
++
++	if ((rc = nlpayload_read(ctrl_fd, (void *)chap_buf, ev_size, 0)) < 0) {
++		log_error("can not read from NL socket, error %d", rc);
++		return rc;
++	}
++
++	*valid_chap_entries = ev.u.get_chap.num_entries;
++
++	return rc;
++}
++
++static int kdelete_chap(uint64_t transport_handle, uint32_t host_no,
++			uint16_t chap_tbl_idx)
++{
++	int rc = 0;
++	struct iscsi_uevent ev;
++	struct iovec iov[2];
++
++	memset(&ev, 0, sizeof(struct iscsi_uevent));
++
++	ev.type = ISCSI_UEVENT_DELETE_CHAP;
++	ev.transport_handle = transport_handle;
++	ev.u.delete_chap.host_no = host_no;
++	ev.u.delete_chap.chap_tbl_idx = chap_tbl_idx;
++
++	iov[1].iov_base = &ev;
++	iov[1].iov_len = sizeof(ev);
++
++	rc = __kipc_call(iov, 2);
++	if (rc < 0)
++		return rc;
++
++	return rc;
++}
++
+ static void drop_data(struct nlmsghdr *nlh)
+ {
+ 	int ev_size;
+@@ -1041,7 +1269,7 @@ static int ctldev_handle(void)
+ 	char nlm_ev[NLMSG_SPACE(sizeof(struct iscsi_uevent))];
+ 	struct nlmsghdr *nlh;
+ 	struct iscsi_ev_context *ev_context;
+-	uint32_t sid = 0, cid = 0, state = 0;
++	uint32_t sid = 0, cid = 0;
+ 
+ 	log_debug(7, "in %s", __FUNCTION__);
+ 
+@@ -1060,11 +1288,17 @@ static int ctldev_handle(void)
+ 	/* old kernels sent ISCSI_UEVENT_CREATE_SESSION on creation */
+ 	case ISCSI_UEVENT_CREATE_SESSION:
+ 		drop_data(nlh);
++		if (!ipc_ev_clbk)
++			return 0;
++
+ 		if (ipc_ev_clbk->create_session)
+ 			ipc_ev_clbk->create_session(ev->r.c_session_ret.host_no,
+ 						    ev->r.c_session_ret.sid);
+ 		return 0;
+ 	case ISCSI_KEVENT_DESTROY_SESSION:
++		if (!ipc_ev_clbk)
++			return 0;
++
+ 		drop_data(nlh);
+ 		if (ipc_ev_clbk->destroy_session)
+ 			ipc_ev_clbk->destroy_session(ev->r.d_session.host_no,
+@@ -1081,7 +1315,6 @@ static int ctldev_handle(void)
+ 	case ISCSI_KEVENT_CONN_LOGIN_STATE:
+ 		sid = ev->r.conn_login.sid;
+ 		cid = ev->r.conn_login.cid;
+-		state = ev->r.conn_login.state;
+ 		break;
+ 	case ISCSI_KEVENT_UNBIND_SESSION:
+ 		sid = ev->r.unbind_session.sid;
+@@ -1106,6 +1339,14 @@ static int ctldev_handle(void)
+ 
+ 		drop_data(nlh);
+ 		return 0;
++	case ISCSI_KEVENT_PING_COMP:
++		ping_event.host_no = ev->r.ping_comp.host_no;
++		ping_event.pid = ev->r.ping_comp.pid;
++		ping_event.status = ev->r.ping_comp.status;
++		ping_event.active = 1;
++
++		drop_data(nlh);
++		return 0;
+ 	default:
+ 		if ((ev->type > ISCSI_UEVENT_MAX && ev->type < KEVENT_BASE) ||
+ 		    (ev->type > ISCSI_KEVENT_MAX))
+@@ -1299,6 +1540,9 @@ struct iscsi_ipc nl_ipc = {
+ 	.recv_pdu_end           = krecv_pdu_end,
+ 	.set_net_config         = kset_net_config,
+ 	.recv_conn_state        = krecv_conn_state,
++	.exec_ping		= kexec_ping,
++	.get_chap		= kget_chap,
++	.delete_chap		= kdelete_chap,
+ };
+ struct iscsi_ipc *ipc = &nl_ipc;
+ 
