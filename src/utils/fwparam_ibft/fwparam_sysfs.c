@@ -170,6 +170,18 @@ static int fill_nic_context(char *subsys, char *id,
 {
 	int rc;
 
+	rc = sysfs_get_int(id, subsys, "flags", &context->nic_flags);
+	/*
+	 * Per spec we would need to check against Bit 0
+	 * (Block Valid Flag), but some firmware only
+	 * sets Bit 1 (Firmware Booting Selected).
+	 * So any setting is deemed okay.
+	 */
+	if (!rc && (context->nic_flags == 0))
+		rc = ENODEV;
+	if (rc)
+		return rc;
+
 	rc = sysfs_get_str(id, subsys, "mac", context->mac,
 			   sizeof(context->mac));
 	if (rc)
@@ -200,6 +212,9 @@ static int fill_nic_context(char *subsys, char *id,
 		strlcpy(context->scsi_host_name, subsys,
 			sizeof(context->scsi_host_name));
 
+	memset(&context->boot_nic, 0, sizeof(context->boot_nic));
+	snprintf(context->boot_nic, sizeof(context->boot_nic), "%s", id);
+
 	sysfs_get_str(id, subsys, "ip-addr", context->ipaddr,
 		      sizeof(context->ipaddr));
 	sysfs_get_str(id, subsys, "vlan", context->vlan,
@@ -214,6 +229,7 @@ static int fill_nic_context(char *subsys, char *id,
 		      sizeof(context->secondary_dns));
 	sysfs_get_str(id, subsys, "dhcp", context->dhcp,
 		      sizeof(context->dhcp));
+	sysfs_get_int(id, subsys, "origin", (int *)&context->origin);
 	return 0;
 }
 
@@ -224,11 +240,25 @@ static void fill_initiator_context(char *subsys, struct boot_context *context)
 		      sizeof(context->initiatorname));
 	sysfs_get_str("initiator", subsys, "isid", context->isid,
 		      sizeof(context->isid));
+
+	strlcpy(context->boot_root, subsys, sizeof(context->boot_root));
 }
 static int fill_tgt_context(char *subsys, char *id,
 			    struct boot_context *context)
 {
 	int rc;
+
+	rc = sysfs_get_int(id, subsys, "flags", &context->target_flags);
+	/*
+	 * Per spec we would need to check against Bit 0
+	 * (Block Valid Flag), but some firmware only
+	 * sets Bit 1 (Firmware Booting Selected).
+	 * So any setting is deemed okay.
+	 */
+	if (!rc && (context->target_flags == 0))
+		rc = ENODEV;
+	if (rc)
+		return rc;
 
 	rc = sysfs_get_str(id, subsys, "target-name", context->targetname,
 			   sizeof(context->targetname));
@@ -239,6 +269,9 @@ static int fill_tgt_context(char *subsys, char *id,
 			   sizeof(context->target_ipaddr));
 	if (rc)
 		return rc;
+
+	memset(&context->boot_target, 0, sizeof(context->boot_target));
+	snprintf(context->boot_target, sizeof(context->boot_target), "%s", id);
 
 	/*
 	 * We can live without the rest of they do not exist. If we
@@ -315,7 +348,7 @@ static int get_boot_info(struct boot_context *context, char *rootdir,
 	nic_cnt = 0;
 	tgt_cnt = 0;
 	if (file_exist(initiator_dir)) {
-		/* Find the target's and the ethernet's */
+		/* Find the targets and the ethernets */
 		rc = nftw(rootdir, find_sysfs_dirs, 20, 1);
 
 		/* Find wihch target and which ethernet have
@@ -391,7 +424,7 @@ static int get_targets(struct list_head *list, char *rootdir, char *subsys)
 	nic_cnt = 0;
 	tgt_cnt = 0;
 
-	/* Find the target's and the ethernet's */
+	/* Find the targets and the ethernets */
 	nftw(rootdir, find_sysfs_dirs, 20, 1);
 	for (i = 0; i < tgt_cnt; i++) {
 		context = calloc(1, sizeof(*context));

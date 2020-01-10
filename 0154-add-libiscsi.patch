@@ -1,7 +1,7 @@
-From 2085be92364beeef39f57a27052fc924094be448 Mon Sep 17 00:00:00 2001
+From 2b8ba79bfa079177962465c215d5ea2fccfda400 Mon Sep 17 00:00:00 2001
 From: Chris Leech <cleech@redhat.com>
 Date: Mon, 19 Nov 2012 16:43:15 -0800
-Subject: [PATCH] add libiscsi
+Subject: add libiscsi
 
 ---
  Makefile                                    |    2 +
@@ -43,7 +43,7 @@ Subject: [PATCH] add libiscsi
  create mode 100644 libiscsi/tests/test_set_auth.c
 
 diff --git a/Makefile b/Makefile
-index c8cd00e..cf028cf 100644
+index c8cd00e09b00..cf028cfd078a 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -43,6 +43,7 @@ user: iscsiuio/Makefile
@@ -64,7 +64,7 @@ index c8cd00e..cf028cf 100644
  	$(MAKE) -C utils clean
 diff --git a/libiscsi/Makefile b/libiscsi/Makefile
 new file mode 100644
-index 0000000..317a7ec
+index 000000000000..317a7ec4db30
 --- /dev/null
 +++ b/libiscsi/Makefile
 @@ -0,0 +1,61 @@
@@ -131,7 +131,7 @@ index 0000000..317a7ec
 +-include .depend ../usr/.depend
 diff --git a/libiscsi/libiscsi.c b/libiscsi/libiscsi.c
 new file mode 100644
-index 0000000..6e6846a
+index 000000000000..6e6846a5162e
 --- /dev/null
 +++ b/libiscsi/libiscsi.c
 @@ -0,0 +1,620 @@
@@ -757,7 +757,7 @@ index 0000000..6e6846a
 +}
 diff --git a/libiscsi/libiscsi.doxy b/libiscsi/libiscsi.doxy
 new file mode 100644
-index 0000000..663770f
+index 000000000000..663770f3e939
 --- /dev/null
 +++ b/libiscsi/libiscsi.doxy
 @@ -0,0 +1,1473 @@
@@ -2236,7 +2236,7 @@ index 0000000..663770f
 +SEARCHENGINE           = NO
 diff --git a/libiscsi/libiscsi.h b/libiscsi/libiscsi.h
 new file mode 100644
-index 0000000..756590e
+index 000000000000..756590e14d8b
 --- /dev/null
 +++ b/libiscsi/libiscsi.h
 @@ -0,0 +1,344 @@
@@ -2586,7 +2586,7 @@ index 0000000..756590e
 +#endif
 diff --git a/libiscsi/pylibiscsi.c b/libiscsi/pylibiscsi.c
 new file mode 100644
-index 0000000..4b09aa7
+index 000000000000..4b09aa7b956a
 --- /dev/null
 +++ b/libiscsi/pylibiscsi.c
 @@ -0,0 +1,638 @@
@@ -3230,7 +3230,7 @@ index 0000000..4b09aa7
 +}
 diff --git a/libiscsi/setup.py b/libiscsi/setup.py
 new file mode 100644
-index 0000000..bb4329b
+index 000000000000..bb4329bc2158
 --- /dev/null
 +++ b/libiscsi/setup.py
 @@ -0,0 +1,9 @@
@@ -3245,7 +3245,7 @@ index 0000000..bb4329b
 +       description = 'libiscsi python bindings', ext_modules = [module1])
 diff --git a/libiscsi/tests/test_discovery_firmware.c b/libiscsi/tests/test_discovery_firmware.c
 new file mode 100644
-index 0000000..76e852a
+index 000000000000..76e852a37019
 --- /dev/null
 +++ b/libiscsi/tests/test_discovery_firmware.c
 @@ -0,0 +1,53 @@
@@ -3304,7 +3304,7 @@ index 0000000..76e852a
 +}
 diff --git a/libiscsi/tests/test_discovery_sendtargets.c b/libiscsi/tests/test_discovery_sendtargets.c
 new file mode 100644
-index 0000000..1a3c12e
+index 000000000000..1a3c12ef684b
 --- /dev/null
 +++ b/libiscsi/tests/test_discovery_sendtargets.c
 @@ -0,0 +1,60 @@
@@ -3370,7 +3370,7 @@ index 0000000..1a3c12e
 +}
 diff --git a/libiscsi/tests/test_get_auth.c b/libiscsi/tests/test_get_auth.c
 new file mode 100644
-index 0000000..5e234da
+index 000000000000..5e234dadd0de
 --- /dev/null
 +++ b/libiscsi/tests/test_get_auth.c
 @@ -0,0 +1,70 @@
@@ -3446,7 +3446,7 @@ index 0000000..5e234da
 +}
 diff --git a/libiscsi/tests/test_get_initiator_name.c b/libiscsi/tests/test_get_initiator_name.c
 new file mode 100644
-index 0000000..997c053
+index 000000000000..997c053e5bf6
 --- /dev/null
 +++ b/libiscsi/tests/test_get_initiator_name.c
 @@ -0,0 +1,38 @@
@@ -3490,7 +3490,7 @@ index 0000000..997c053
 +}
 diff --git a/libiscsi/tests/test_get_network_config.c b/libiscsi/tests/test_get_network_config.c
 new file mode 100644
-index 0000000..2dedd61
+index 000000000000..2dedd6102858
 --- /dev/null
 +++ b/libiscsi/tests/test_get_network_config.c
 @@ -0,0 +1,45 @@
@@ -3541,7 +3541,7 @@ index 0000000..2dedd61
 +}
 diff --git a/libiscsi/tests/test_login.c b/libiscsi/tests/test_login.c
 new file mode 100644
-index 0000000..3eb70d6
+index 000000000000..3eb70d63e111
 --- /dev/null
 +++ b/libiscsi/tests/test_login.c
 @@ -0,0 +1,52 @@
@@ -3599,7 +3599,7 @@ index 0000000..3eb70d6
 +}
 diff --git a/libiscsi/tests/test_logout.c b/libiscsi/tests/test_logout.c
 new file mode 100644
-index 0000000..b734dca
+index 000000000000..b734dca58773
 --- /dev/null
 +++ b/libiscsi/tests/test_logout.c
 @@ -0,0 +1,51 @@
@@ -3656,7 +3656,7 @@ index 0000000..b734dca
 +}
 diff --git a/libiscsi/tests/test_params.c b/libiscsi/tests/test_params.c
 new file mode 100644
-index 0000000..d3223be
+index 000000000000..d3223be1e894
 --- /dev/null
 +++ b/libiscsi/tests/test_params.c
 @@ -0,0 +1,103 @@
@@ -3765,7 +3765,7 @@ index 0000000..d3223be
 +}
 diff --git a/libiscsi/tests/test_set_auth.c b/libiscsi/tests/test_set_auth.c
 new file mode 100644
-index 0000000..a21f888
+index 000000000000..a21f88806ab9
 --- /dev/null
 +++ b/libiscsi/tests/test_set_auth.c
 @@ -0,0 +1,58 @@
@@ -3828,7 +3828,7 @@ index 0000000..a21f888
 +	return rc;
 +}
 diff --git a/usr/Makefile b/usr/Makefile
-index c1866b6..6d3ce2e 100644
+index c1866b6a4ed8..6d3ce2e8b6ce 100644
 --- a/usr/Makefile
 +++ b/usr/Makefile
 @@ -30,7 +30,7 @@ endif
@@ -3841,7 +3841,7 @@ index c1866b6..6d3ce2e 100644
  
  # libc compat files
 diff --git a/usr/discovery.c b/usr/discovery.c
-index 593d226..de8267f 100644
+index 593d22650f0d..de8267f08f8a 100644
 --- a/usr/discovery.c
 +++ b/usr/discovery.c
 @@ -36,6 +36,7 @@
@@ -3882,11 +3882,11 @@ index 593d226..de8267f 100644
  int discovery_fw(void *data, struct iface_rec *iface,
  		 struct list_head *rec_list)
 diff --git a/usr/idbm.c b/usr/idbm.c
-index 0cffaff..ca63373 100644
+index a749cc8ea3f8..979fefb7a5d7 100644
 --- a/usr/idbm.c
 +++ b/usr/idbm.c
-@@ -1706,9 +1706,9 @@ int idbm_print_all_discovery(int info_level)
-  * fn should return -1 if it skipped the rec, a ISCSI_ERR error code if
+@@ -1709,9 +1709,9 @@ int idbm_print_all_discovery(int info_level)
+  * fn should return -1 if it skipped the rec, an ISCSI_ERR error code if
   * the operation failed or 0 if fn was run successfully.
   */
 -static int idbm_for_each_iface(int *found, void *data,
@@ -3899,7 +3899,7 @@ index 0cffaff..ca63373 100644
  	DIR *iface_dirfd;
  	struct dirent *iface_dent;
 diff --git a/usr/idbm.h b/usr/idbm.h
-index b89ddff..3631262 100644
+index b89ddffe55df..36312621f06c 100644
 --- a/usr/idbm.h
 +++ b/usr/idbm.h
 @@ -102,6 +102,9 @@ struct rec_op_data {
@@ -3913,7 +3913,7 @@ index b89ddff..3631262 100644
  				idbm_portal_op_fn *fn, char *targetname);
  extern int idbm_for_each_node(int *found, void *data,
 diff --git a/usr/iscsi_ipc.h b/usr/iscsi_ipc.h
-index 5087b5c..a6dc40a 100644
+index 5087b5c6343d..a6dc40a55d78 100644
 --- a/usr/iscsi_ipc.h
 +++ b/usr/iscsi_ipc.h
 @@ -166,4 +166,6 @@ struct iscsi_ipc {
@@ -3924,5 +3924,5 @@ index 5087b5c..a6dc40a 100644
 +
  #endif /* ISCSI_IPC_H */
 -- 
-2.5.5
+2.9.3
 

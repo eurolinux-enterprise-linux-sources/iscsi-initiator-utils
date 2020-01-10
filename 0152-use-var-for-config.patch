@@ -1,7 +1,7 @@
-From 64f14715ed2fc4f54f8fad3bcada35ce8ff29b43 Mon Sep 17 00:00:00 2001
+From c229e7d74a3103814403f7c242abcbaef211e259 Mon Sep 17 00:00:00 2001
 From: Chris Leech <cleech@redhat.com>
 Date: Mon, 19 Nov 2012 16:38:45 -0800
-Subject: [PATCH] use var for config
+Subject: use var for config
 
 ---
  README         | 33 ++++++++++++++++-----------------
@@ -12,7 +12,7 @@ Subject: [PATCH] use var for config
  5 files changed, 33 insertions(+), 31 deletions(-)
 
 diff --git a/README b/README
-index 8db3013..cfc7f2f 100644
+index 3757b2d26d0d..fa38c8c82dcf 100644
 --- a/README
 +++ b/README
 @@ -170,8 +170,7 @@ Usage: iscsid [OPTION]
@@ -45,13 +45,13 @@ index 8db3013..cfc7f2f 100644
  iface_name transport_name,hwaddress,ipaddress,net_ifacename,initiatorname
  
  For software iscsi, you can create the iface configs by hand, but it is
- reccomended that you use iscsiadm's iface mode. There is a iface.example in
+ recommended that you use iscsiadm's iface mode. There is an iface.example in
 -/etc/iscsi/ifaces which can be used as a template for the daring.
 +/var/lib/iscsi/ifaces which can be used as a template for the daring.
  
  For each network object you wish to bind a session to you must create
--a seperate iface config in /etc/iscsi/ifaces and each iface config file
-+a seperate iface config in /var/lib/iscsi/ifaces and each iface config file
+-a separate iface config in /etc/iscsi/ifaces and each iface config file
++a separate iface config in /var/lib/iscsi/ifaces and each iface config file
  must have a unique name which is less than or equal to 64 characters.
  
  Example:
@@ -78,7 +78,7 @@ index 8db3013..cfc7f2f 100644
  The format is:
  
  iface_name transport_name,hwaddress,ipaddress,net_ifacename,initiatorname
-@@ -681,7 +680,7 @@ need a seperate network connection to the target for discovery purposes.
+@@ -681,7 +680,7 @@ need a separate network connection to the target for discovery purposes.
  *This will be fixed in the next version of open-iscsi*
  
  For compatibility reasons, when you run iscsiadm to do discovery, it
@@ -87,7 +87,7 @@ index 8db3013..cfc7f2f 100644
  tcp for the iface.transport and it will bind the portals that are discovered
  so that they will be logged in through those ifaces. This behavior can also
  be overriden by passing in the interfaces you want to use. For the case
-@@ -699,7 +698,7 @@ we do not bind a session to a iface, then you can use the special iface
+@@ -699,7 +698,7 @@ we do not bind a session to an iface, then you can use the special iface
  
  iscsiadm -m discoverydb -t st -p ip:port -I default --discover -P 1
  
@@ -96,7 +96,7 @@ index 8db3013..cfc7f2f 100644
  not pass anything into iscsiadm, running iscsiadm will do the default
  behavior, where we allow the network subsystem to decide which
  device to use.
-@@ -741,7 +740,7 @@ To now log into targets it is the same as with sofware iscsi. See section
+@@ -741,7 +740,7 @@ To now log into targets it is the same as with software iscsi. See section
  
  	    ./iscsiadm -m discoverydb -t st -p 192.168.1.1:3260 --discover
  
@@ -105,7 +105,7 @@ index 8db3013..cfc7f2f 100644
  	ID [portal = 192.168.1.1:3260 and type = sendtargets. If found it
  	will perform discovery using the settings stored in the record.
  	If a record does not exist, it will be created using the iscsid.conf
-@@ -750,7 +749,7 @@ To now log into targets it is the same as with sofware iscsi. See section
+@@ -750,7 +749,7 @@ To now log into targets it is the same as with software iscsi. See section
  	The argument to -p may also be a hostname instead of an address.
  	    ./iscsiadm -m discoverydb -t st -p smoehost --discover
  
@@ -114,7 +114,7 @@ index 8db3013..cfc7f2f 100644
  	interfaces using software iscsi. If any are found then nodes found
  	during discovery will be setup so that they can logged in through
  	those interfaces. To specify a specific iface, pass the
-@@ -806,7 +805,7 @@ To now log into targets it is the same as with sofware iscsi. See section
+@@ -806,7 +805,7 @@ To now log into targets it is the same as with software iscsi. See section
  	This command will perform discovery, but not manipulate the node DB.
  
    - SendTargets iSCSI Discovery with a specific interface. If you
@@ -144,7 +144,7 @@ index 8db3013..cfc7f2f 100644
  Note that for iSNS the poll_interval does not have to be set. If not set,
  iscsid will only perform rediscovery when it gets a SCN from the server.
 diff --git a/doc/iscsiadm.8 b/doc/iscsiadm.8
-index c7d8c92..3f33f6c 100644
+index a82805e28fb9..758a47c2d1fe 100644
 --- a/doc/iscsiadm.8
 +++ b/doc/iscsiadm.8
 @@ -241,7 +241,7 @@ This option is only valid for ping submode.
@@ -179,10 +179,10 @@ index c7d8c92..3f33f6c 100644
  
  .SH "SEE ALSO"
 diff --git a/usr/idbm.c b/usr/idbm.c
-index 2d64172..0cffaff 100644
+index 2fe424fb66ba..a749cc8ea3f8 100644
 --- a/usr/idbm.c
 +++ b/usr/idbm.c
-@@ -2843,9 +2843,9 @@ free_info:
+@@ -2917,9 +2917,9 @@ free_info:
  int idbm_init(idbm_get_config_file_fn *fn)
  {
  	/* make sure root db dir is there */
@@ -196,7 +196,7 @@ index 2d64172..0cffaff 100644
  			return errno;
  		}
 diff --git a/usr/idbm.h b/usr/idbm.h
-index b9020fe..b89ddff 100644
+index b9020fe4fd0a..b89ddffe55df 100644
 --- a/usr/idbm.h
 +++ b/usr/idbm.h
 @@ -29,12 +29,13 @@
@@ -220,7 +220,7 @@ index b9020fe..b89ddff 100644
  #define ISNS_CONFIG_NAME	"isns_config"
  
 diff --git a/usr/iface.h b/usr/iface.h
-index 01f7074..f396918 100644
+index 01f70747dadd..f396918ccc15 100644
 --- a/usr/iface.h
 +++ b/usr/iface.h
 @@ -20,7 +20,9 @@
@@ -235,5 +235,5 @@ index 01f7074..f396918 100644
  struct iface_rec;
  struct list_head;
 -- 
-2.5.5
+2.9.3
 

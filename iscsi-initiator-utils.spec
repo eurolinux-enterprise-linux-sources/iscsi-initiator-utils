@@ -1,30 +1,31 @@
 %define open_iscsi_version	2.0
-%define open_iscsi_build	873
+%define open_iscsi_build	874
 
 Summary: iSCSI daemon and utility programs
 Name: iscsi-initiator-utils
 Version: 6.%{open_iscsi_version}.%{open_iscsi_build}
-Release: 35%{?dist}
+Release: 10%{?dist}
 Group: System Environment/Daemons
 License: GPLv2+
 URL: http://www.open-iscsi.org
 
-Source0: http://www.open-iscsi.org/bits/open-iscsi-%{open_iscsi_version}-%{open_iscsi_build}.tar.gz
+Source0: https://github.com/open-iscsi/open-iscsi/archive/%{open_iscsi_version}.%{open_iscsi_build}.tar.gz#/open-iscsi-%{open_iscsi_version}.%{open_iscsi_build}.tar.gz
 Source4: 04-iscsi
 Source5: iscsi-tmpfiles.conf
 
 # upstream patches, post last tagged version
-Patch1: open-iscsi-0001-sync-from-2.0.873.patch
-Patch2: open-iscsi-0002-ARP-table-too-small-when-switches-involved.patch
-Patch3: open-iscsi-0003-Build-system-sort-object-file-lists.patch
-Patch4: open-iscsi-0004-iscsi_tcp-set-SO_LINGER-to-abort-connection-for-e.patch
-Patch5: open-iscsi-0005-iscsiadm-fix-parallel-rescan-handling-of-exit-cod.patch
-Patch6: open-iscsi-0006-iscsistart-support-booting-over-a-VLAN.patch
-Patch7: open-iscsi-0007-iscsid-safe_logout-fix-device-path-canonicalizati.patch
-Patch8: open-iscsi-0008-iscsid-make-safe_logut-session-checks-apply-for-f.patch
-Patch9: open-iscsi-0009-remove-sysfs-attr_list.patch
+Patch1: open-iscsi-2.0.874-1-iBFT-origin-is-an-enum-not-a-string.patch
+Patch2: open-iscsi-2.0.874-4-iscsid-treat-SIGTERM-like-iscsiadm-k-0.patch
+Patch3: open-iscsi-2.0.874-5-Make-event_loop_stop-volatile-for-safer-access.patch
+Patch4: open-iscsi-2.0.874-7-iscsid-Changes-to-support-the-new-qedi-transport.patch
+Patch5: open-iscsi-2.0.874-8-iscsiuio-Add-support-for-the-new-qedi-transport.patch
+Patch6: open-iscsi-2.0.874-9-iscsiuio-v0.7.8.3.patch
+Patch7: open-iscsi-2.0.874-7-Allow-disabling-auto-LUN-scans.patch
+Patch8: open-iscsi-2.0.874-23-Fix-manual-LUN-scans-feature.patch
+Patch9: open-iscsi-2.0.874-27-iscsid-Add-qedi-ping-transport-hook.patch
+Patch20: open-iscsi-2.0.874-30-isolate-iscsistart-socket-use.patch
 # not (yet) upstream merged
-Patch140: open-iscsi-2.0.873-Revert-ISCSIUIO-Fixed-a-pthread-resc-leak-from-exces.patch
+Patch140: open-iscsi-2.0.874-iscsid-reset-head-on-wrap-when-buffer-empty.patch
 Patch143: 0143-idmb_rec_write-check-for-tpgt-first.patch
 Patch145: 0145-idbm_rec_write-seperate-old-and-new-style-writes.patch
 Patch146: 0146-idbw_rec_write-pick-tpgt-from-existing-record.patch
@@ -47,6 +48,17 @@ Patch168: 0168-update-handling-of-boot-sessions.patch
 Patch169: 0169-update-iscsi.service-for-boot-session-recovery.patch
 Patch170: 0170-fix-systemd-unit-wants.patch
 Patch172: 0172-move-cleanup-to-seperate-service.patch
+Patch175: open-iscsi-2.0.876-41-vlan-setting-sync-across-ipv4-ipv6-for-be2iscsi.patch
+Patch176: 0001-enable-MaxOutstandingR2T-negotiation.patch
+Patch177: open-iscsi-2.0.874-30-iscsiuio-fix-dhcpv6-transaction-id-mismatch-error.patch
+Patch178: open-iscsi-2.0.874-31-iscsiuio-serialize-xmit_mutex-lock-to-prevent-iscsiuio-seg-fault.patch
+Patch179: open-iscsi-2.0.874-32-iscsiuio-allow-ARP-for-non-matching-src-and-dst-addresses.patch
+Patch180: open-iscsi-2.0.874-33-iscsiuio-v0.7.8.4.patch
+Patch181: open-iscsi-2.0.876-3-qedi.c-Removed-unused-linux-ethtool.h.patch
+Patch182: open-iscsi-2.0.876-31-Fix-iscsiuio-segfault-when-shutting-down.patch
+Patch183: open-iscsi-2.0.876-54-iscsiuio-Add-inter-host-mutex-while-doing-xmit.patch
+Patch184: 0184-set-iscsid.safe_logout-to-Yes-by-default.patch
+
 # upstream removed internal open-isns, but not taking that here just yet
 # it requires repackaging isns-utils to provide a debug package
 Patch198: keep-open-isns.patch
@@ -89,7 +101,7 @@ The %{name}-devel package contains libraries and header files for
 developing applications that use %{name}.
 
 %prep
-%autosetup -p1 -n open-iscsi-%{open_iscsi_version}-%{open_iscsi_build}
+%autosetup -p1 -n open-iscsi-%{open_iscsi_version}.%{open_iscsi_build}
 
 # change exec_prefix, there's no easy way to override
 %{__sed} -i -e 's|^exec_prefix = /$|exec_prefix = %{_exec_prefix}|' Makefile
@@ -179,6 +191,7 @@ if [ $1 -eq 1 ]; then
 	# enable socket activation and persistant session startup by default
 	/bin/systemctl enable iscsi.service >/dev/null 2>&1 || :
 	/bin/systemctl enable iscsid.socket >/dev/null 2>&1 || :
+	/bin/systemctl start iscsid.socket >/dev/null 2>&1 || :
 fi
 
 %post iscsiuio
@@ -186,6 +199,7 @@ fi
 
 if [ $1 -eq 1 ]; then
 	/bin/systemctl enable iscsiuio.socket >/dev/null 2>&1 || :
+	/bin/systemctl start iscsiuio.socket >/dev/null 2>&1 || :
 fi
 
 %preun
@@ -270,6 +284,39 @@ fi
 %{_includedir}/libiscsi.h
 
 %changelog
+* Wed Aug 29 2018 Chris Leech <cleech@redhat.com> - 6.2.0.874-10
+- 1185734 set iscsid.safe_logout to Yes by default
+
+* Fri Jun 22 2018 Chris Leech <cleech@redhat.com> - 6.2.0.874-9
+- 1578984 update iscsiuio to v0.7.8.4
+
+* Fri Jun 22 2018 Chris Leech <cleech@redhat.com> - 6.2.0.874-8
+- 1278438 enable MaxOutstandingR2T negotiation during login
+
+* Thu Nov 30 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-7
+- 1328694 keep vlan settings in sync for ipv4/ipv6 iface records with be2iscsi
+
+* Wed Nov 01 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-6
+- 1507945 force start iscsiuio for boot session recovery with qedi
+- 1457359 start systemd socket listeners, otherwise if iscsid is started
+  directly iscsiuio doesn't activate as expected
+
+* Tue Aug 15 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-5
+- 1431622 fix default in iscsi-iname manpage to match Red Hat customization
+
+* Tue Jun 27 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-4
+- 1450756 isolate iscsistart sockets
+
+* Fri Apr 28 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-3
+- 1445686 add missing ping hook for the qedi transport driver
+
+* Tue Apr 11 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-2
+- 1422941 allow disabling of auto scanning sessions, requested for OpenStack
+
+* Tue Feb 28 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-1
+- 1384090 upstream 2.0.874+ with qedi support
+- 1414819 iscsid reporting blank emerg messages
+
 * Thu Aug 18 2016 Chris Leech <cleech@redhat.com> - 6.2.0.873-35
 - 1362590 Revert iscsiuio pthread changes that result in a race condition on shutdown
 

@@ -1,0 +1,106 @@
+From: Chris Leech <cleech@redhat.com>
+Subject: iscsiuio: v0.7.8.4
+
+Bugzilla: ZZZ
+Upstream Status:
+Build Info: XXX
+Tested:
+
+commit 5481f86e46d1668917bbf41ed2355b6eb558de69
+Author: Nilesh Javali <nilesh.javali@cavium.com>
+Date:   Thu Feb 22 08:04:13 2018 -0500
+
+    iscsiuio: v0.7.8.4
+    
+    Signed-off-by: Nilesh Javali <nilesh.javali@cavium.com>
+---
+ iscsiuio/README       |  4 ++--
+ iscsiuio/RELEASE.TXT  | 39 +++++++++++++++++++++++++++++++++++++--
+ iscsiuio/configure.ac |  4 ++--
+ 3 files changed, 41 insertions(+), 6 deletions(-)
+
+diff --git a/iscsiuio/README b/iscsiuio/README
+index ca2da16a7342..9cbf7ce6717a 100644
+--- a/iscsiuio/README
++++ b/iscsiuio/README
+@@ -1,6 +1,6 @@
+ Iscsiuio Userspace Tool
+-Version 0.7.8.3
+-Sept 28, 2016
++Version 0.7.8.4
++Feb 22, 2018
+ ------------------------------------------------------
+ 
+ This tool is to be used in conjunction with the QLogic NetXtreme II Linux
+diff --git a/iscsiuio/RELEASE.TXT b/iscsiuio/RELEASE.TXT
+index 69c5b5f6bd61..ca51b26338a1 100644
+--- a/iscsiuio/RELEASE.TXT
++++ b/iscsiuio/RELEASE.TXT
+@@ -1,7 +1,7 @@
+                               Release Notes
+                         QLogic uIP Linux Driver
+-                            Version 0.7.8.3
+-                               9/28/2016
++                            Version 0.7.8.4
++                               2/22/2018
+ 
+                           QLogic Corporation
+                         26650 Aliso Viejo Pkwy,
+@@ -12,6 +12,41 @@
+                            All rights reserved
+ 
+ 
++
++uIP v0.7.8.4 (Feb 22, 2018)
++=======================================================
++    Fixes:
++    -------
++      1. Problem: CQ95605: iSCSI BFS in DHCP config intermittently fails to boot
++                  into the OS when source and destination addresses are in
++                  different networks.
++         Change: Allow ARP for non-matching source and destination addresses.
++                 For source and destination IP addresses in different networks,
++                 continue with the ARP retries and further login process
++                 instead of assuming abrupt failure. iSCSI offload adapters
++                 may not rely on netmask information for successful iSCSI
++                 target login.
++         Impact: All
++
++uIP v0.7.8.3 (May 18, 2017)
++=======================================================
++    Fixes:
++    -------
++      1. Problem: CQ93985: iscsiuio seg faults if discovery done to not
++                  reachable target
++         Change: Serialize xmit_mutex lock to prevent iscsiuio seg fault.
++         Impact: All
++
++      2. Problem: CQ91497 - Initiator fails to acquire IPv6 DHCP address
++                  from the DHCP server
++         Change: Initialize the transaction-id within the dhcpv6 packet with
++                 correct byte order, to fix the trans-id mismatch error.
++         Impact: All
++
++      3. Problem: Missing qedi ping transport hook
++         Change: Add qedi ping transport hook
++         Impact: 10/25/40/50GGbE Controller (iSCSI)
++
+ uIP v0.7.8.3 (Sept 28, 2016)
+ =======================================================
+    Enhancements
+diff --git a/iscsiuio/configure.ac b/iscsiuio/configure.ac
+index 075d07d04f34..fa67ea74c47a 100644
+--- a/iscsiuio/configure.ac
++++ b/iscsiuio/configure.ac
+@@ -12,9 +12,9 @@ dnl             Benjamin Li  (benli@broadcom.com)
+ dnl
+ 
+ PACKAGE=iscsiuio
+-VERSION=0.7.8.3
++VERSION=0.7.8.4
+ 
+-AC_INIT([iscsiuio], [0.7.8.3], [QLogic-Storage-Upstream@cavium.com])
++AC_INIT([iscsiuio], [0.7.8.4], [QLogic-Storage-Upstream@cavium.com])
+ 
+ AM_INIT_AUTOMAKE
+ AC_CONFIG_HEADER(config.h)

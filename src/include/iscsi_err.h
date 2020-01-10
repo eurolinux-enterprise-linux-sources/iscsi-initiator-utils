@@ -62,6 +62,12 @@ enum {
 	ISCSI_ERR_OP_NOT_SUPP		= 27,
 	/* device or resource in use */
 	ISCSI_ERR_BUSY			= 28,
+	/* Operation failed, but retrying layer may succeed */
+	ISCSI_ERR_AGAIN			= 29,
+	/* unknown discovery type */
+	ISCSI_ERR_UNKNOWN_DISCOVERY_TYPE = 30,
+	/* child process terminated */
+	ISCSI_ERR_CHILD_TERMINATED	= 31,
 
 	/* Always last. Indicates end of error code space */
 	ISCSI_MAX_ERR_VAL,

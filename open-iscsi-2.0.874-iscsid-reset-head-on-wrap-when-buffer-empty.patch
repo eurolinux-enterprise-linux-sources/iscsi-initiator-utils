@@ -1,0 +1,27 @@
+From 2235c48bd993ead1d6e3de405b98b524d4bc0b61 Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@redhat.com>
+Date: Tue, 28 Feb 2017 19:34:03 -0800
+Subject: iscsid: reset head on wrap when buffer empty
+
+Reported-By: David Jeffery <djeffery@redhat.com>
+---
+ usr/log.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/usr/log.c b/usr/log.c
+index 26c61d847793..b730642779bf 100644
+--- a/usr/log.c
++++ b/usr/log.c
+@@ -189,6 +189,9 @@ int log_enqueue (int prio, const char * fmt, va_list ap)
+ 	    (len + sizeof(struct logmsg)) > (la->end - la->tail)) {
+ 		logdbg(stderr, "enqueue: rewind tail to %p\n", la->tail);
+ 			la->tail = la->start;
++
++			if (la->empty)
++				la->head = lastmsg = la->tail;
+ 	}
+ 
+ 	/* not enough space on head : drop msg */
+-- 
+2.9.3
+

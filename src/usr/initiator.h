@@ -343,6 +343,7 @@ extern void free_initiator(void);
 extern void iscsi_initiator_init(void);
 
 /* initiator code common to discovery and normal sessions */
+extern int iscsi_session_set_neg_params(struct iscsi_conn *conn);
 extern int iscsi_session_set_params(struct iscsi_conn *conn);
 extern int iscsi_host_set_params(struct iscsi_session *session);
 extern int iscsi_host_set_net_params(struct iface_rec *iface,
@@ -353,5 +354,10 @@ extern void iscsi_copy_operational_params(struct iscsi_conn *conn,
 extern int iscsi_setup_authentication(struct iscsi_session *session,
 				      struct iscsi_auth_config *auth_cfg);
 extern int iscsi_setup_portal(struct iscsi_conn *conn, char *address, int port);
+extern int iscsi_set_net_config(struct iscsi_transport *t,
+				iscsi_session_t *session,
+				struct iface_rec *iface);
+extern void iscsi_session_init_params(struct iscsi_session *session);
 
+extern int session_in_use(int sid);
 #endif /* INITIATOR_H */

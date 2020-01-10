@@ -1,0 +1,29 @@
+From 3f15a2270a7efb1a6ee8ef555b01f3d8674818b9 Mon Sep 17 00:00:00 2001
+From: Lee Duncan <leeman.duncan@gmail.com>
+Date: Fri, 10 Jul 2015 11:58:55 -0700
+Subject: iBFT 'origin' is an enum, not a string
+
+A recent change, commit 4959a89f421fdebc, modified open-iscsi
+to treat the "origin" field as an enum, not a character
+string. But one spot was missed.
+---
+ utils/fwparam_ibft/fwparam_ibft_sysfs.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/utils/fwparam_ibft/fwparam_ibft_sysfs.c b/utils/fwparam_ibft/fwparam_ibft_sysfs.c
+index 2dc6f6d5fe54..019fc19184bb 100644
+--- a/utils/fwparam_ibft/fwparam_ibft_sysfs.c
++++ b/utils/fwparam_ibft/fwparam_ibft_sysfs.c
+@@ -201,8 +201,7 @@ static int fill_nic_context(char *id, struct boot_context *context)
+ 		      sizeof(context->secondary_dns));
+ 	sysfs_get_str(id, IBFT_SUBSYS, "dhcp", context->dhcp,
+ 		      sizeof(context->dhcp));
+-	sysfs_get_str(id, IBFT_SUBSYS, "origin", context->origin,
+-		      sizeof(context->origin));
++	sysfd_get_int(id, IBFT_SUBSYS, "origin", &context->origin);
+ 	return 0;
+ }
+ 
+-- 
+2.9.3
+

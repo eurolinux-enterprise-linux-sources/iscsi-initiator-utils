@@ -1,0 +1,265 @@
+From 5e32aea95741a07d53153c658a0572588eae494d Mon Sep 17 00:00:00 2001
+From: Gorka Eguileor <geguileo@redhat.com>
+Date: Tue, 21 Feb 2017 20:01:39 +0100
+Subject: Allow disabling auto LUN scans
+
+Existing behavior of auto scanning LUNs is problematic for some
+deployments, particularly in cases where we are:
+
+- Accessing different LUNs from the same target on different machines
+  and we don't want the other LUNs automatically exposed in other
+  systems.
+
+- LUNs are constantly being created and removed from the target by
+  another machine and we don't want our systems polluted by no longer
+  available logical units, since default udev rules don't remove them
+  automatically from the system once they have been added automatically.
+
+This is a little more problematic when working with multipaths as we end
+up with a lot of leftover device maps.
+
+This patch introduces a new configuration option at the session level
+called "scan", with "auto" and "manual" as acceptable values, that
+allows us to disable the autoscan in the following cases:
+
+- On iscsid start
+- On login
+- On AEN/AER messages reporting LUNs data has changed.
+
+For HW drivers all sessions will use the value defined in the
+configuration file.
+
+Default value for this new option is "auto" to maintain existing
+behavior.
+---
+ etc/iscsid.conf      |  8 ++++++++
+ usr/config.h         |  1 +
+ usr/idbm.c           | 14 +++++++++++++-
+ usr/idbm.h           |  1 +
+ usr/idbm_fields.h    |  1 +
+ usr/initiator.c      |  5 +++--
+ usr/iscsi_settings.h |  3 +++
+ usr/iscsi_sysfs.c    |  7 +++++--
+ usr/iscsi_sysfs.h    |  2 +-
+ usr/iscsiadm.c       |  2 +-
+ usr/iscsid.c         |  2 +-
+ usr/iscsistart.c     |  3 +++
+ 12 files changed, 41 insertions(+), 8 deletions(-)
+
+diff --git a/etc/iscsid.conf b/etc/iscsid.conf
+index f7ecb6b3c2ab..cb77a777062d 100644
+--- a/etc/iscsid.conf
++++ b/etc/iscsid.conf
+@@ -305,3 +305,11 @@ node.session.iscsi.FastAbort = Yes
+ # a task management function like an ABORT TASK or LOGICAL UNIT RESET, that
+ # it continue to respond to R2Ts. To enable this uncomment this line
+ # node.session.iscsi.FastAbort = No
++
++# To prevent doing automatic scans that would add unwanted luns to the system
++# we can disable them and have sessions only do manually requested scans.
++# Automatic scans are performed on startup, on login, and on AEN/AER reception
++# on devices supporting it.  For HW drivers all sessions will use the value
++# defined in the configuration file.  This configuration option is independent
++# of scsi_mod scan parameter. (The default behavior is auto):
++node.session.scan = auto
+diff --git a/usr/config.h b/usr/config.h
+index 5b1bb1d624c5..3bcb93fe7322 100644
+--- a/usr/config.h
++++ b/usr/config.h
+@@ -190,6 +190,7 @@ typedef struct session_rec {
+ 	int					queue_depth;
+ 	int					initial_login_retry_max;
+ 	int					nr_sessions;
++	int					scan;
+ 	struct iscsi_auth_config		auth;
+ 	struct iscsi_session_timeout_config	timeo;
+ 	struct iscsi_error_timeout_config	err_timeo;
+diff --git a/usr/idbm.c b/usr/idbm.c
+index 3b8a5a20bec8..ff8d67f64c51 100644
+--- a/usr/idbm.c
++++ b/usr/idbm.c
+@@ -462,6 +462,9 @@ idbm_recinfo_node(node_rec_t *r, recinfo_t *ri)
+ 		      session.iscsi.MaxOutstandingR2T, IDBM_SHOW, num, 1);
+ 	__recinfo_int(SESSION_ERL, ri, r,
+ 		      session.iscsi.ERL, IDBM_SHOW, num, 1);
++	__recinfo_int_o2(SESSION_SCAN, ri, r,
++			 session.scan, IDBM_SHOW, "manual", "auto",
++			 num, 1);
+ 
+ 	for (i = 0; i < ISCSI_CONN_MAX; i++) {
+ 		char key[NAME_MAXVAL];
+@@ -2490,7 +2493,7 @@ static void idbm_rm_disc_node_links(char *disc_dir)
+ 		log_debug(5, "disc removal removing link %s %s %s %s",
+ 			  target, address, port, iface_id);
+ 
+-		memset(rec, 0, sizeof(*rec));	
++		memset(rec, 0, sizeof(*rec));
+ 		strlcpy(rec->name, target, TARGET_NAME_MAXLEN);
+ 		rec->tpgt = atoi(tpgt);
+ 		rec->conn[0].port = atoi(port);
+@@ -2726,6 +2729,14 @@ idbm_slp_defaults(struct iscsi_slp_config *cfg)
+ 	       sizeof(struct iscsi_slp_config));
+ }
+ 
++int
++idbm_session_autoscan(struct iscsi_session *session)
++{
++	if (session)
++		return session->nrec.session.scan;
++	return db->nrec.session.scan;
++}
++
+ struct user_param *idbm_alloc_user_param(char *name, char *value)
+ {
+ 	struct user_param *param;
+@@ -2981,6 +2992,7 @@ void idbm_node_setup_defaults(node_rec_t *rec)
+ 	rec->session.info = NULL;
+ 	rec->session.sid = 0;
+ 	rec->session.multiple = 0;
++	rec->session.scan = DEF_INITIAL_SCAN;
+ 	idbm_setup_session_defaults(&rec->session.iscsi);
+ 
+ 	for (i=0; i<ISCSI_CONN_MAX; i++) {
+diff --git a/usr/idbm.h b/usr/idbm.h
+index b9020fe4fd0a..411dd8230ece 100644
+--- a/usr/idbm.h
++++ b/usr/idbm.h
+@@ -140,6 +140,7 @@ extern int idbm_add_discovery(discovery_rec_t *newrec);
+ extern void idbm_sendtargets_defaults(struct iscsi_sendtargets_config *cfg);
+ extern void idbm_isns_defaults(struct iscsi_isns_config *cfg);
+ extern void idbm_slp_defaults(struct iscsi_slp_config *cfg);
++extern int idbm_session_autoscan(struct iscsi_session *session);
+ extern int idbm_discovery_read(discovery_rec_t *rec, int type, char *addr,
+ 				int port);
+ extern int idbm_rec_read(node_rec_t *out_rec, char *target_name,
+diff --git a/usr/idbm_fields.h b/usr/idbm_fields.h
+index 5790a033d241..4a927584c2fc 100644
+--- a/usr/idbm_fields.h
++++ b/usr/idbm_fields.h
+@@ -45,6 +45,7 @@
+ #define SESSION_MAX_CONNS	"node.session.iscsi.MaxConnections"
+ #define SESSION_MAX_R2T		"node.session.iscsi.MaxOutstandingR2T"
+ #define SESSION_ERL		"node.session.iscsi.ERL"
++#define SESSION_SCAN		"node.session.scan"
+ 
+ /* connections fields */
+ #define CONN_ADDR		"node.conn[%d].address"
+diff --git a/usr/initiator.c b/usr/initiator.c
+index ed174b5af38f..a86d1e6dee90 100644
+--- a/usr/initiator.c
++++ b/usr/initiator.c
+@@ -997,7 +997,7 @@ static void session_scan_host(struct iscsi_session *session, int hostno,
+ {
+ 	pid_t pid;
+ 
+-	pid = iscsi_sysfs_scan_host(hostno, 1);
++	pid = iscsi_sysfs_scan_host(hostno, 1, idbm_session_autoscan(session));
+ 	if (pid == 0) {
+ 		mgmt_ipc_write_rsp(qtask, ISCSI_SUCCESS);
+ 
+@@ -1201,7 +1201,8 @@ static void iscsi_recv_async_msg(iscsi_conn_t *conn, struct iscsi_hdr *hdr)
+ 			break;
+ 		}
+ 
+-		if (sshdr.asc == 0x3f && sshdr.ascq == 0x0e)
++		if (sshdr.asc == 0x3f && sshdr.ascq == 0x0e
++		    && idbm_session_autoscan(session))
+ 			session_scan_host(session, session->hostno, NULL);
+ 		break;
+ 	case ISCSI_ASYNC_MSG_REQUEST_LOGOUT:
+diff --git a/usr/iscsi_settings.h b/usr/iscsi_settings.h
+index 3d923c8ba029..296ff403b1e5 100644
+--- a/usr/iscsi_settings.h
++++ b/usr/iscsi_settings.h
+@@ -45,3 +45,6 @@
+ 
+ /* login retries */
+ #define DEF_INITIAL_LOGIN_RETRIES_MAX	4
++
++/* autoscan enabled */
++#define DEF_INITIAL_SCAN	1
+diff --git a/usr/iscsi_sysfs.c b/usr/iscsi_sysfs.c
+index 8ca668fdb3bc..2f94b632baaa 100644
+--- a/usr/iscsi_sysfs.c
++++ b/usr/iscsi_sysfs.c
+@@ -1883,12 +1883,15 @@ void iscsi_sysfs_rescan_device(void *data, int hostno, int target, int lun)
+ 			strlen(write_buf));
+ }
+ 
+-pid_t iscsi_sysfs_scan_host(int hostno, int async)
++pid_t iscsi_sysfs_scan_host(int hostno, int async, int full_scan)
+ {
+ 	char id[NAME_SIZE];
+-	char *write_buf = "- - -";
++	char write_buf[6] = "- - 0";
+ 	pid_t pid = 0;
+ 
++	if (full_scan)
++		write_buf[4] = '-';
++
+ 	if (async)
+ 		pid = fork();
+ 	if (pid == 0) {
+diff --git a/usr/iscsi_sysfs.h b/usr/iscsi_sysfs.h
+index 9a56105165b3..3492ce6e033c 100644
+--- a/usr/iscsi_sysfs.h
++++ b/usr/iscsi_sysfs.h
+@@ -87,7 +87,7 @@ extern void iscsi_sysfs_get_negotiated_session_conf(int sid,
+ 				struct iscsi_session_operational_config *conf);
+ extern void iscsi_sysfs_get_negotiated_conn_conf(int sid,
+ 				struct iscsi_conn_operational_config *conf);
+-extern pid_t iscsi_sysfs_scan_host(int hostno, int async);
++extern pid_t iscsi_sysfs_scan_host(int hostno, int async, int full);
+ extern int iscsi_sysfs_get_session_state(char *state, int sid);
+ extern int iscsi_sysfs_get_host_state(char *state, int host_no);
+ extern int iscsi_sysfs_get_device_state(char *state, int host_no, int target,
+diff --git a/usr/iscsiadm.c b/usr/iscsiadm.c
+index 4b2bd34cbb2e..90e2828bcb79 100644
+--- a/usr/iscsiadm.c
++++ b/usr/iscsiadm.c
+@@ -773,7 +773,7 @@ static int rescan_portal(void *data, struct session_info *info)
+ 	iscsi_sysfs_for_each_device(NULL, host_no, info->sid,
+ 				    iscsi_sysfs_rescan_device);
+ 	/* now scan for new devices */
+-	iscsi_sysfs_scan_host(host_no, 0);
++	iscsi_sysfs_scan_host(host_no, 0, 1);
+ 	return 0;
+ }
+ 
+diff --git a/usr/iscsid.c b/usr/iscsid.c
+index 81a14f259b5f..813eb3da940d 100644
+--- a/usr/iscsid.c
++++ b/usr/iscsid.c
+@@ -216,7 +216,7 @@ static int sync_session(void *data, struct session_info *info)
+ 				  iscsi_err_to_str(err));
+ 			return 0;
+ 		}
+-		iscsi_sysfs_scan_host(host_no, 0);
++		iscsi_sysfs_scan_host(host_no, 0, idbm_session_autoscan(NULL));
+ 		return 0;
+ 	}
+ 
+diff --git a/usr/iscsistart.c b/usr/iscsistart.c
+index 5cf09721636b..67ac47515f23 100644
+--- a/usr/iscsistart.c
++++ b/usr/iscsistart.c
+@@ -140,6 +140,7 @@ static int apply_params(struct node_rec *rec)
+ 	rec->session.initial_login_retry_max = -1;
+ 	rec->conn[0].timeo.noop_out_interval = -1;
+ 	rec->conn[0].timeo.noop_out_timeout = -1;
++	rec->session.scan = -1;
+ 
+ 	list_for_each_entry(param, &user_params, list) {
+ 		/*
+@@ -183,6 +184,8 @@ static int apply_params(struct node_rec *rec)
+ 		rec->conn[0].timeo.noop_out_interval = 0;
+ 	if (rec->conn[0].timeo.noop_out_timeout == -1)
+ 		rec->conn[0].timeo.noop_out_timeout = 0;
++	if (rec->session.scan == -1)
++		rec->session.scan = DEF_INITIAL_SCAN;
+ 
+ 	return 0;
+ }
+-- 
+2.9.3
+

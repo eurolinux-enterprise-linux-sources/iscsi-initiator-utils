@@ -1,0 +1,35 @@
+From c3122e9aedc4ebb49090df86e6f53806fed6cebc Mon Sep 17 00:00:00 2001
+From: Lee Duncan <lduncan@suse.com>
+Date: Wed, 23 Nov 2016 14:50:35 -0800
+Subject: iscsid: treat SIGTERM like "iscsiadm -k 0"
+
+The same code that is executed by iscsid
+when iscsiadm sends the "immediate stop"
+command should be executed when iscsid
+receives a SIGTERM.
+
+Changes since v1:
+ * now just set the "event loop stop" flag
+
+Signed-off-by: Lee Duncan <lduncan@suse.com>
+---
+ usr/iscsid.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/usr/iscsid.c b/usr/iscsid.c
+index 0c2634448d09..81a14f259b5f 100644
+--- a/usr/iscsid.c
++++ b/usr/iscsid.c
+@@ -313,8 +313,7 @@ static void catch_signal(int signo)
+ 
+ 	switch (signo) {
+ 	case SIGTERM:
+-		iscsid_shutdown();
+-		exit(0);
++		event_loop_exit(NULL);
+ 		break;
+ 	default:
+ 		break;
+-- 
+2.9.3
+

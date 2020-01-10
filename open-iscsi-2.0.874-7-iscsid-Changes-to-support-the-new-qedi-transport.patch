@@ -1,0 +1,73 @@
+From dc939e78d6dab78f3fcddfada581fa402604bb51 Mon Sep 17 00:00:00 2001
+From: Nilesh Javali <nilesh.javali@cavium.com>
+Date: Fri, 11 Nov 2016 08:17:50 +0200
+Subject: iscsid: Changes to support the new qedi transport
+
+Signed-off-by: Manish Rangankar <manish.rangankar@cavium.com>
+Signed-off-by: Adheer Chandravanshi <adheer.chandravanshi@qlogic.com>
+Signed-off-by: Nilesh Javali <nilesh.javali@cavium.com>
+---
+ usr/initiator_common.c |  2 +-
+ usr/transport.c        | 13 +++++++++++++
+ usr/transport.h        |  1 +
+ 3 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/usr/initiator_common.c b/usr/initiator_common.c
+index 1d1d82251ad4..191e779bb942 100644
+--- a/usr/initiator_common.c
++++ b/usr/initiator_common.c
+@@ -700,7 +700,7 @@ int iscsi_host_set_net_params(struct iface_rec *iface,
+ 		netdev = hinfo.iface.netdev;
+ 	}
+ 
+-	if (net_ifup_netdev(netdev))
++	if (!t->template->no_netdev && net_ifup_netdev(netdev))
+ 		log_warning("Could not brining up netdev %s. Try running "
+ 			    "'ifup %s' first if login fails.", netdev, netdev);
+ 
+diff --git a/usr/transport.c b/usr/transport.c
+index 18b770464608..533ba30a8846 100644
+--- a/usr/transport.c
++++ b/usr/transport.c
+@@ -114,6 +114,18 @@ struct iscsi_transport_template ocs = {
+ 	.ep_disconnect	= ktransport_ep_disconnect,
+ };
+ 
++struct iscsi_transport_template qedi = {
++	.name		= "qedi",
++	.set_host_ip	= SET_HOST_IP_REQ,
++	.use_boot_info	= 1,
++	.bind_ep_required = 1,
++	.no_netdev = 1,
++	.ep_connect	= ktransport_ep_connect,
++	.ep_poll	= ktransport_ep_poll,
++	.ep_disconnect	= ktransport_ep_disconnect,
++	.set_net_config = uip_broadcast_params,
++};
++
+ static struct iscsi_transport_template *iscsi_transport_templates[] = {
+ 	&iscsi_tcp,
+ 	&iscsi_iser,
+@@ -123,6 +135,7 @@ static struct iscsi_transport_template *iscsi_transport_templates[] = {
+ 	&qla4xxx,
+ 	&be2iscsi,
+ 	&ocs,
++	&qedi,
+ 	NULL
+ };
+ 
+diff --git a/usr/transport.h b/usr/transport.h
+index 4d3bdbff67f8..b67776b47288 100644
+--- a/usr/transport.h
++++ b/usr/transport.h
+@@ -39,6 +39,7 @@ struct iscsi_transport_template {
+ 	uint8_t set_host_ip;
+ 	uint8_t use_boot_info;
+         uint8_t bind_ep_required;
++	uint8_t no_netdev;
+ 	int (*ep_connect) (struct iscsi_conn *conn, int non_blocking);
+ 	int (*ep_poll) (struct iscsi_conn *conn, int timeout_ms);
+ 	void (*ep_disconnect) (struct iscsi_conn *conn);
+-- 
+2.9.3
+

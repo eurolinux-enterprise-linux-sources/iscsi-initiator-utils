@@ -1,0 +1,33 @@
+From 3951c242d266689a8c856717b02b07c1fe193a31 Mon Sep 17 00:00:00 2001
+From: Lee Duncan <lduncan@suse.com>
+Date: Fri, 2 Dec 2016 09:22:02 -0800
+Subject: Make event_loop_stop volatile for safer access
+
+As suggested by Christian Seiler:
+"Only minor thing is that you might want to mark
+static int event_loop_stop; (usr/event_poll.c)
+to be volatile, to be on the safe side when modifying it
+from within a signal handler. Probably not really required
+here (the compiler is not allowed to optimize out the
+access anyway, since you call non-static functions within
+the loop), but it doesn't hurt either, just in case... "
+---
+ usr/event_poll.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/usr/event_poll.c b/usr/event_poll.c
+index 209ee0280c0a..ac2504404366 100644
+--- a/usr/event_poll.c
++++ b/usr/event_poll.c
+@@ -123,7 +123,7 @@ static int shutdown_wait_pids(void)
+ #define POLL_ALARM	2
+ #define POLL_MAX	3
+ 
+-static int event_loop_stop;
++static volatile int event_loop_stop;
+ static queue_task_t *shutdown_qtask; 
+ 
+ void event_loop_exit(queue_task_t *qtask)
+-- 
+2.9.3
+

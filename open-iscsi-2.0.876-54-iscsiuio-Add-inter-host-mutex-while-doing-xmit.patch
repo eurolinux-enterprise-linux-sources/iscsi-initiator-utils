@@ -1,0 +1,248 @@
+From d469a2e15e8558cf8ba34db376b4b777177a016b Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@redhat.com>
+Date: Fri, 22 Jun 2018 12:30:09 -0700
+Subject: [PATCH 1/1] iscsiuio: Add inter-host mutex while doing xmit
+
+Bugzilla: ZZZ
+Upstream Status:
+Build Info: XXX
+Tested:
+
+commit 9501dcaf5be474b4cb882a5e00f875f8c57e0e8e
+Author: Manish Rangankar <manish.rangankar@cavium.com>
+Date:   Wed Jun 20 02:33:36 2018 -0400
+
+    iscsiuio: Add inter-host mutex while doing xmit
+
+    This avoids the netlink buffer corruption when more than one host
+    try to xmit packet at the same time.
+
+    Signed-off-by: Manish Rangankar <manish.rangankar@cavium.com>
+---
+ iscsiuio/src/unix/libs/cnic.c |  2 ++
+ iscsiuio/src/unix/libs/qedi.c | 38 +++++++++++++++++++++++++++++++++-----
+ iscsiuio/src/unix/nic.c       | 15 ++++++++++++---
+ iscsiuio/src/unix/nic_utils.c |  4 ++++
+ 4 files changed, 51 insertions(+), 8 deletions(-)
+
+diff --git a/iscsiuio/src/unix/libs/cnic.c b/iscsiuio/src/unix/libs/cnic.c
+index 32166edf243f..b953278e5eab 100644
+--- a/iscsiuio/src/unix/libs/cnic.c
++++ b/iscsiuio/src/unix/libs/cnic.c
+@@ -106,6 +106,8 @@ static int cnic_arp_send(nic_t *nic, nic_interface_t *nic_iface, int fd,
+ 	static const uint8_t multicast_mac[] = {
+ 				0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+ 
++	LOG_DEBUG(PFX "%s: host:%d - try getting xmit mutex cnic arp send",
++		  nic->log_name, nic->host_no);
+ 	rc = pthread_mutex_trylock(&nic->xmit_mutex);
+ 	if (rc != 0) {
+ 		LOG_DEBUG(PFX "%s: could not get xmit_mutex", nic->log_name);
+diff --git a/iscsiuio/src/unix/libs/qedi.c b/iscsiuio/src/unix/libs/qedi.c
+index 5bb0682c8bed..32cab48fed17 100644
+--- a/iscsiuio/src/unix/libs/qedi.c
++++ b/iscsiuio/src/unix/libs/qedi.c
+@@ -74,6 +74,8 @@
+ 
+ extern int nl_sock;
+ 
++static pthread_mutex_t host_mutex = PTHREAD_MUTEX_INITIALIZER;
++
+ /*  Foward struct declarations */
+ struct nic_ops qedi_op;
+ 
+@@ -812,15 +814,26 @@ static void qedi_prepare_xmit_packet(nic_t *nic,
+ 	struct uip_vlan_eth_hdr *eth_vlan = (struct uip_vlan_eth_hdr *)pkt->buf;
+ 	struct uip_eth_hdr *eth = (struct uip_eth_hdr *)bp->tx_pkt;
+ 
++	LOG_DEBUG(PFX "%s: pkt->buf_size=%d tpid=0x%x", nic->log_name,
++		  pkt->buf_size, eth_vlan->tpid);
++	
+ 	if (eth_vlan->tpid == htons(UIP_ETHTYPE_8021Q)) {
+ 		memcpy(bp->tx_pkt, pkt->buf, sizeof(struct uip_eth_hdr));
+ 		eth->type = eth_vlan->type;
+ 		pkt->buf_size -= (sizeof(struct uip_vlan_eth_hdr) -
+ 				  sizeof(struct uip_eth_hdr));
++
++	LOG_DEBUG(PFX "%s: pkt->buf_size=%d type=0x%x", nic->log_name,
++		  pkt->buf_size, eth->type);
++	LOG_DEBUG(PFX "%s: pkt->buf_size - eth_hdr_size = %d", nic->log_name,
++		  pkt->buf_size - sizeof(struct uip_eth_hdr));
++
+ 		memcpy(bp->tx_pkt + sizeof(struct uip_eth_hdr),
+ 		       pkt->buf + sizeof(struct uip_vlan_eth_hdr),
+ 		       pkt->buf_size - sizeof(struct uip_eth_hdr));
+ 	} else {
++		LOG_DEBUG(PFX "%s: NO VLAN pkt->buf_size=%d", nic->log_name,
++			  pkt->buf_size);
+ 		memcpy(bp->tx_pkt, pkt->buf, pkt->buf_size);
+ 	}
+ 
+@@ -876,11 +889,18 @@ void qedi_start_xmit(nic_t *nic, size_t len, u16_t vlan_id)
+ 	path_data->handle = QEDI_PATH_HANDLE;
+ 	path_data->vlan_id = vlan_id;
+ 	uctrl->host_tx_pkt_len = len;
++	LOG_DEBUG(PFX "%s: host_no:%d vlan_id=%d, tx_pkt_len=%d",
++		  nic->log_name, ev->u.set_path.host_no, path_data->vlan_id, uctrl->host_tx_pkt_len);
+ 
++	LOG_DEBUG(PFX "%s: ACQUIRE HOST MUTEX", nic->log_name);
++	pthread_mutex_lock(&host_mutex);
+ 	rc = __kipc_call(nl_sock, ev, buflen);
+ 	if (rc > 0) {
+ 		bp->tx_prod++;
+ 		uctrl->host_tx_prod++;
++		LOG_DEBUG(PFX "%s: bp->tx_prod: %d, uctrl->host_tx_prod=%d",
++			  nic->log_name, bp->tx_prod, uctrl->host_tx_prod);
++
+ 		msync(uctrl, sizeof(struct qedi_uio_ctrl), MS_SYNC);
+ 		LOG_PACKET(PFX "%s: sent %d bytes using bp->tx_prod: %d",
+ 			   nic->log_name, len, bp->tx_prod);
+@@ -888,6 +908,8 @@ void qedi_start_xmit(nic_t *nic, size_t len, u16_t vlan_id)
+ 		LOG_ERR(PFX "Pkt transmission failed: %d", rc);
+ 	}
+ 
++	LOG_DEBUG(PFX "%s: RELEASE HOST MUTEX", nic->log_name);
++	pthread_mutex_unlock(&host_mutex);
+ 	free(ubuf);
+ }
+ 
+@@ -923,14 +945,18 @@ int qedi_write(nic_t *nic, nic_interface_t *nic_iface, packet_t *pkt)
+ 		struct timespec sleep_req = {.tv_sec = 0, .tv_nsec = 5000000 },
+ 		    sleep_rem;
+ 
++		LOG_DEBUG(PFX "%s: host:%d - calling clear_tx_intr from qedi_write",
++			  nic->log_name, nic->host_no);
+ 		if (qedi_clear_tx_intr(nic) == 0)
+ 			break;
+ 
+ 		nanosleep(&sleep_req, &sleep_rem);
+ 	}
+ 
++	LOG_DEBUG(PFX "%s: host:%d - try getting xmit mutex",
++		   nic->log_name, nic->host_no);
+ 	if (pthread_mutex_trylock(&nic->xmit_mutex) != 0) {
+-		LOG_PACKET(PFX "%s: Dropped previous transmitted packet",
++		LOG_DEBUG(PFX "%s: Dropped previous transmitted packet",
+ 			   nic->log_name);
+ 		return -EINVAL;
+ 	}
+@@ -944,7 +970,7 @@ int qedi_write(nic_t *nic, nic_interface_t *nic_iface, packet_t *pkt)
+ 	nic->stats.tx.packets++;
+ 	nic->stats.tx.bytes += uip->uip_len;
+ 
+-	LOG_PACKET(PFX "%s: transmitted %d bytes dev->tx_cons: %d, dev->tx_prod: %d, dev->tx_bd_prod:%d",
++	LOG_DEBUG(PFX "%s: transmitted %d bytes dev->tx_cons: %d, dev->tx_prod: %d, dev->tx_bd_prod:%d",
+ 		   nic->log_name, pkt->buf_size,
+ 		   bp->tx_cons, bp->tx_prod, bp->tx_bd_prod);
+ 
+@@ -1071,7 +1097,7 @@ static int qedi_clear_tx_intr(nic_t *nic)
+ 		return -EINVAL;
+ 	}
+ 
+-	LOG_PACKET(PFX "%s: clearing tx interrupt [%d %d]",
++	LOG_DEBUG(PFX "%s: clearing tx interrupt [%d %d]",
+ 		   nic->log_name, bp->tx_cons, hw_cons);
+ 	bp->tx_cons = hw_cons;
+ 
+@@ -1083,7 +1109,7 @@ static int qedi_clear_tx_intr(nic_t *nic)
+ 		packet_t *pkt;
+ 		int i;
+ 
+-		LOG_PACKET(PFX "%s: sending queued tx packet", nic->log_name);
++		LOG_DEBUG(PFX "%s: sending queued tx packet", nic->log_name);
+ 		pkt = nic_dequeue_tx_packet(nic);
+ 
+ 		/* Got a TX packet buffer of the TX queue and put it onto
+@@ -1096,7 +1122,7 @@ static int qedi_clear_tx_intr(nic_t *nic)
+ 					(pkt->nic_iface->vlan_priority << 12) |
+ 					pkt->nic_iface->vlan_id);
+ 
+-			LOG_PACKET(PFX "%s: transmitted queued packet %d bytes, dev->tx_cons: %d, dev->tx_prod: %d, dev->tx_bd_prod:%d",
++			LOG_DEBUG(PFX "%s: transmitted queued packet %d bytes, dev->tx_cons: %d, dev->tx_prod: %d, dev->tx_bd_prod:%d",
+ 				   nic->log_name, pkt->buf_size,
+ 				   bp->tx_cons, bp->tx_prod, bp->tx_bd_prod);
+ 
+@@ -1124,6 +1150,8 @@ static int qedi_clear_tx_intr(nic_t *nic)
+ 		}
+ 	}
+ 
++	LOG_DEBUG(PFX "%s: host:%d - releasing xmit mutex",
++		   nic->log_name, nic->host_no);
+ 	pthread_mutex_unlock(&nic->xmit_mutex);
+ 
+ 	return 0;
+diff --git a/iscsiuio/src/unix/nic.c b/iscsiuio/src/unix/nic.c
+index a5f714a91923..dfc2ad0a7a7b 100644
+--- a/iscsiuio/src/unix/nic.c
++++ b/iscsiuio/src/unix/nic.c
+@@ -799,6 +799,8 @@ int nic_process_intr(nic_t *nic, int discard_check)
+ 
+ 		nic->intr_count = count;
+ 
++		LOG_DEBUG(PFX "%s: host:%d - calling clear_tx_intr from process_intr",
++			   nic->log_name, nic->host_no);
+ 		(*nic->ops->clear_tx_intr) (nic);
+ 		ret = 1;
+ 	}
+@@ -1036,9 +1038,11 @@ int process_packets(nic_t *nic,
+ 		case UIP_ETHTYPE_IPv4:
+ 		case UIP_ETHTYPE_ARP:
+ 			af_type = AF_INET;
++			LOG_DEBUG(PFX "%s: ARP or IPv4 vlan:0x%x ethertype:0x%x",
++				   nic->log_name, vlan_id, type);
+ 			break;
+ 		default:
+-			LOG_PACKET(PFX "%s: Ignoring vlan:0x%x ethertype:0x%x",
++			LOG_DEBUG(PFX "%s: Ignoring vlan:0x%x ethertype:0x%x",
+ 				   nic->log_name, vlan_id, type);
+ 			goto done;
+ 		}
+@@ -1064,7 +1068,7 @@ int process_packets(nic_t *nic,
+ 		if (nic_iface == NULL) {
+ 			/* Matching nic_iface not found */
+ 			pthread_mutex_unlock(&nic->nic_mutex);
+-			LOG_PACKET(PFX "%s: Couldn't find interface for "
++			LOG_DEBUG(PFX "%s: Couldn't find interface for "
+ 				   "VLAN: %d af_type %d",
+ 				nic->log_name, vlan_id, af_type);
+ 			rc = EINVAL;  /* Return the +error code */
+@@ -1118,6 +1122,8 @@ nic_iface_present:
+ 				prepare_ipv4_packet(nic, nic_iface,
+ 						    ustack, pkt);
+ 
++				LOG_DEBUG(PFX "%s: write called after arp_ipin, uip_len=%d",
++					  nic->log_name, ustack->uip_len);
+ 				(*nic->ops->write) (nic, nic_iface, pkt);
+ 			}
+ 
+@@ -1129,8 +1135,11 @@ nic_iface_present:
+ 			 * in data that should be sent out on the
+ 			 * network, the global variable uip_len
+ 			 * is set to a value > 0. */
+-			if (pkt->buf_size > 0)
++			if (pkt->buf_size > 0) {
++				LOG_DEBUG(PFX "%s: write called after arp_arpin, bufsize=%d",
++					   nic->log_name, pkt->buf_size);
+ 				(*nic->ops->write) (nic, nic_iface, pkt);
++			}
+ 			break;
+ 		}
+ 		ustack->uip_len = 0;
+diff --git a/iscsiuio/src/unix/nic_utils.c b/iscsiuio/src/unix/nic_utils.c
+index 6e580f862eea..988905bca2a9 100644
+--- a/iscsiuio/src/unix/nic_utils.c
++++ b/iscsiuio/src/unix/nic_utils.c
+@@ -1435,6 +1435,10 @@ nic_interface_t *nic_find_nic_iface(nic_t *nic,
+ 	nic_interface_t *current_vlan = NULL;
+ 
+ 	while (current != NULL) {
++		LOG_DEBUG(PFX "%s: incoming protocol: %d, vlan_id:%d iface_num: %d, request_type: %d",
++			  nic->log_name, protocol, vlan_id, iface_num,  request_type);
++		LOG_DEBUG(PFX "%s: host:%d iface_num: 0x%x VLAN: %d protocol: %d",
++			  nic->log_name, nic->host_no, current->iface_num, current->vlan_id, current->protocol);
+ 		if (current->protocol != protocol)
+ 			goto next;
+ 
+-- 
+2.14.4
+

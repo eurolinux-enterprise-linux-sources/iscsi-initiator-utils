@@ -1,14 +1,28 @@
-From bf7f9118ab2f1a5302dafa198d3351f6f977b7bd Mon Sep 17 00:00:00 2001
+From 7f12a1ca8fe699958903278d010cf22d0a98767b Mon Sep 17 00:00:00 2001
 From: Chris Leech <cleech@redhat.com>
 Date: Mon, 19 Nov 2012 16:40:04 -0800
 Subject: use red hat for name
 
 ---
+ doc/iscsi-iname.8   | 2 +-
  utils/iscsi-iname.c | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
+ 2 files changed, 2 insertions(+), 2 deletions(-)
 
+diff --git a/doc/iscsi-iname.8 b/doc/iscsi-iname.8
+index a55d666d1af3..dd77ed9f3165 100644
+--- a/doc/iscsi-iname.8
++++ b/doc/iscsi-iname.8
+@@ -14,7 +14,7 @@ generates a unique iSCSI node name on every invocation.
+ Display help
+ .TP
+ .BI [-p=]\fIprefix\fP
+-Use the prefix passed in instead of the default "iqn.2005-03.org.open-iscsi"
++Use the prefix passed in instead of the default "iqn.1994-05.com.redhat"
+ 
+ .SH AUTHORS
+ Open-iSCSI project <http://www.open-iscsi.com/>
 diff --git a/utils/iscsi-iname.c b/utils/iscsi-iname.c
-index 6347edc..cb2f6c8 100644
+index 6347edc46293..cb2f6c8b8651 100644
 --- a/utils/iscsi-iname.c
 +++ b/utils/iscsi-iname.c
 @@ -73,7 +73,7 @@ main(int argc, char *argv[])
@@ -21,5 +35,5 @@ index 6347edc..cb2f6c8 100644
  
  	/* try to feed some entropy from the pool to MD5 in order to get
 -- 
-1.7.11.7
+2.9.5
 

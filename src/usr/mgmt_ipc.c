@@ -36,28 +36,33 @@
 #include "sysdeps.h"
 #include "iscsi_ipc.h"
 #include "iscsi_err.h"
+#include "iscsi_util.h"
 
 #define PEERUSER_MAX	64
 #define EXTMSG_MAX	(64 * 1024)
+#define SD_SOCKET_FDS_START 3
 
 int
 mgmt_ipc_listen(void)
 {
-	int fd, err;
+	int fd, err, addr_len;
 	struct sockaddr_un addr;
 
+	/* first check if we have fd handled by systemd */
+	fd = mgmt_ipc_systemd();
+	if (fd >= 0)
+		return fd;
+
+	/* manually establish a socket */
 	fd = socket(AF_LOCAL, SOCK_STREAM, 0);
 	if (fd < 0) {
 		log_error("Can not create IPC socket");
 		return fd;
 	}
 
-	memset(&addr, 0, sizeof(addr));
-	addr.sun_family = AF_LOCAL;
-	memcpy((char *) &addr.sun_path + 1, ISCSIADM_NAMESPACE,
-		strlen(ISCSIADM_NAMESPACE));
+	addr_len = setup_abstract_addr(&addr, ISCSIADM_NAMESPACE);
 
-	if ((err = bind(fd, (struct sockaddr *) &addr, sizeof(addr))) < 0) {
+	if ((err = bind(fd, (struct sockaddr *) &addr, addr_len)) < 0 ) {
 		log_error("Can not bind IPC socket");
 		close(fd);
 		return err;
@@ -70,6 +75,28 @@ mgmt_ipc_listen(void)
 	}
 
 	return fd;
+}
+
+int mgmt_ipc_systemd(void)
+{
+	const char *env;
+
+	env = getenv("LISTEN_PID");
+
+	if (!env || (strtoul(env, NULL, 10) != getpid()))
+		return -EINVAL;
+
+	env = getenv("LISTEN_FDS");
+
+	if (!env)
+		return -EINVAL;
+
+	if (strtoul(env, NULL, 10) != 1) {
+		log_error("Did not receive exactly one IPC socket from systemd");
+		return -EINVAL;
+	}
+
+	return SD_SOCKET_FDS_START;
 }
 
 void
@@ -437,7 +464,6 @@ mgmt_ipc_write_rsp(queue_task_t *qtask, int err)
 	qtask->rsp.err = err;
 	if (write(qtask->mgmt_ipc_fd, &qtask->rsp, sizeof(qtask->rsp)) < 0)
 		log_error("IPC qtask write failed: %s", strerror(errno));
-	close(qtask->mgmt_ipc_fd);
 	mgmt_ipc_destroy_queue_task(qtask);
 }
 

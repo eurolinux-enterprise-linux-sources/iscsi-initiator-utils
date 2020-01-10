@@ -1,0 +1,208 @@
+From 2cee7f4a011619480c83d8279fe5d15de6e37ea8 Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@redhat.com>
+Date: Fri, 22 Jun 2018 12:25:05 -0700
+Subject: [PATCH 1/1] vlan setting sync across ipv4/ipv6 for be2iscsi
+
+be2iscsi exports two ifaces per host port for ipv4 and ipv6 network
+configurations. But, they need to have the same link level configuration
+including vlan settings. If vlan setting are modified in only one iface
+record, then whichever record is applied last (filesystem dependant I
+think) will take effect and things may not work.
+
+This change to iscsiadm applies vlan updates to all records with
+matching MAC addresses if a flag is set on the transport.
+The new transport flag is only set for be2iscsi.
+---
+ usr/iscsiadm.c  | 132 ++++++++++++++++++++++++++++++++++++++++++++------------
+ usr/transport.c |   1 +
+ usr/transport.h |   3 ++
+ 3 files changed, 108 insertions(+), 28 deletions(-)
+
+diff --git a/usr/iscsiadm.c b/usr/iscsiadm.c
+index 6245e89d46cb..9083132942e2 100644
+--- a/usr/iscsiadm.c
++++ b/usr/iscsiadm.c
+@@ -2311,6 +2311,89 @@ static int verify_iface_params(struct list_head *params, struct node_rec *rec)
+ 	return 0;
+ }
+ 
++static int iface_param_update(struct iface_rec *iface, struct list_head *params)
++{
++	struct node_rec *rec;
++	int rc = 0;
++
++	rec = idbm_create_rec(NULL, -1, NULL, -1, iface, 1);
++	if (!rec) {
++		rc = ISCSI_ERR_INVAL;
++		goto update_fail;
++	}
++
++	if (iscsi_check_for_running_session(rec))
++		log_warning("Updating iface while iscsi sessions "
++			    "are using it. You must logout the running "
++			    "sessions then log back in for the "
++			    "new settings to take affect.");
++
++	rc = verify_iface_params(params, rec);
++	if (rc)
++		goto update_fail;
++
++	rc = iface_conf_update(params, &rec->iface);
++	if (rc)
++		goto update_fail;
++
++	rc = __for_each_matched_rec(0, rec, params, idbm_node_set_param);
++	if (rc == ISCSI_ERR_NO_OBJS_FOUND)
++		rc = 0;
++	else if (rc)
++		goto update_fail;
++
++	printf("%s updated.\n", iface->name);
++	free(rec);
++	return rc;
++
++update_fail:
++	log_error("Could not update iface %s: %s",
++		  iface->name, iscsi_err_to_str(rc));
++	free(rec);
++	return rc;
++}
++
++struct iface_param_sync {
++	struct iface_rec *primary;
++	struct list_head *params;
++	int count;
++};
++
++static int update_sync_params(void *data, struct iface_rec *iface)
++{
++	struct iface_param_sync *iface_params = data;
++	struct iface_rec *primary = iface_params->primary;
++	struct list_head *params = iface_params->params;
++
++	if ((strcmp(primary->transport_name, iface->transport_name)) ||
++	    (strcmp(primary->hwaddress, iface->hwaddress)) ||
++	    (primary->iface_num != iface->iface_num))
++		return 0;
++
++	return iface_param_update(iface, params);
++}
++
++static int split_vlan_params(struct list_head *params, struct list_head *vlan_params)
++{
++	struct user_param *param, *tmp;
++
++	list_for_each_entry_safe(param, tmp, params, list) {
++		if (!strncmp(param->name, "iface.vlan", 10)) {
++			list_move_tail(&param->list, vlan_params);
++		}
++	}
++	return 0;
++}
++
++static inline void list_splice_tail(struct list_head *list, struct list_head *head)
++{
++	list->prev->next = head;
++	list->next->prev = head->prev;
++	head->prev->next = list->next;
++	head->prev = list->prev;
++	INIT_LIST_HEAD(list);
++}
++
+ /* TODO: merge iter helpers and clean them up, so we can use them here */
+ static int exec_iface_op(int op, int do_show, int info_level,
+ 			 struct iface_rec *iface, uint64_t host_no,
+@@ -2320,6 +2403,8 @@ static int exec_iface_op(int op, int do_show, int info_level,
+ 	struct node_rec *rec = NULL;
+ 	int rc = 0;
+ 
++	LIST_HEAD(vlan_params);
++	struct iscsi_transport *t;
+ 	switch (op) {
+ 	case OP_NEW:
+ 		if (!iface) {
+@@ -2381,36 +2466,27 @@ delete_fail:
+ 		rec = idbm_create_rec(NULL, -1, NULL, -1, iface, 1);
+ 		if (!rec) {
+ 			rc = ISCSI_ERR_INVAL;
+-			goto update_fail;
++			break;
+ 		}
+-
+-		if (iscsi_check_for_running_session(rec))
+-			log_warning("Updating iface while iscsi sessions "
+-				    "are using it. You must logout the running "
+-				    "sessions then log back in for the "
+-				    "new settings to take affect.");
+-
+-		rc = verify_iface_params(params, rec);
+-		if (rc)
++		t = iscsi_sysfs_get_transport_by_name(rec->iface.transport_name);
++		if (!t) {
++			log_error("Cound not locate transport for iface %s", iface->name);
++			rc = ISCSI_ERR_INVAL;
+ 			break;
+-
+-		/* pass rec's iface because it has the db values */
+-		rc = iface_conf_update(params, &rec->iface);
+-		if (rc)
+-			goto update_fail;
+-
+-		rc = __for_each_matched_rec(0, rec, params,
+-					    idbm_node_set_param);
+-		if (rc == ISCSI_ERR_NO_OBJS_FOUND)
+-			rc = 0;
+-		else if (rc)
+-			goto update_fail;
+-
+-		printf("%s updated.\n", iface->name);
+-		break;
+-update_fail:
+-		log_error("Could not update iface %s: %s",
+-			  iface->name, iscsi_err_to_str(rc));
++		}
++		if (t->template->sync_vlan_settings) {
++			/* sync shared vlan settings across ifaces */
++			int nr_found = 0;
++			struct iface_param_sync sync_params = {
++				.primary = &rec->iface,
++				.params = &vlan_params,
++				.count = 0,
++			};
++			split_vlan_params(params, &vlan_params);
++			iface_for_each_iface(&sync_params, 1, &nr_found, update_sync_params);
++		}
++		iface_param_update(&rec->iface, params);
++		list_splice_tail(&vlan_params, params);
+ 		break;
+ 	case OP_APPLY:
+ 		if (!iface) {
+diff --git a/usr/transport.c b/usr/transport.c
+index 3b7a00a2245e..35a8ccd4a400 100644
+--- a/usr/transport.c
++++ b/usr/transport.c
+@@ -91,6 +91,7 @@ struct iscsi_transport_template bnx2i = {
+ struct iscsi_transport_template be2iscsi = {
+ 	.name		= "be2iscsi",
+         .bind_ep_required = 1,
++	.sync_vlan_settings = 1,
+ 	.create_conn	= be2iscsi_create_conn,
+ 	.ep_connect	= ktransport_ep_connect,
+ 	.ep_poll	= ktransport_ep_poll,
+diff --git a/usr/transport.h b/usr/transport.h
+index b67776b47288..07027564e46b 100644
+--- a/usr/transport.h
++++ b/usr/transport.h
+@@ -40,6 +40,9 @@ struct iscsi_transport_template {
+ 	uint8_t use_boot_info;
+         uint8_t bind_ep_required;
+ 	uint8_t no_netdev;
++	/* be2iscsi has a single host vlan setting,
++	 * but uses 2 ifaces for ipv4 and ipv6 settings; keep them in sync */
++	uint8_t sync_vlan_settings;
+ 	int (*ep_connect) (struct iscsi_conn *conn, int non_blocking);
+ 	int (*ep_poll) (struct iscsi_conn *conn, int timeout_ms);
+ 	void (*ep_disconnect) (struct iscsi_conn *conn);
+-- 
+2.14.4
+
