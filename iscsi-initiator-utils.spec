@@ -4,7 +4,7 @@
 Summary: iSCSI daemon and utility programs
 Name: iscsi-initiator-utils
 Version: 6.%{open_iscsi_version}.%{open_iscsi_build}
-Release: 11%{?dist}
+Release: 4%{?dist}
 Group: System Environment/Daemons
 License: GPLv2+
 URL: http://www.open-iscsi.org
@@ -48,51 +48,11 @@ Patch168: 0168-update-handling-of-boot-sessions.patch
 Patch169: 0169-update-iscsi.service-for-boot-session-recovery.patch
 Patch170: 0170-fix-systemd-unit-wants.patch
 Patch172: 0172-move-cleanup-to-seperate-service.patch
-Patch175: open-iscsi-2.0.876-41-vlan-setting-sync-across-ipv4-ipv6-for-be2iscsi.patch
-Patch176: 0001-enable-MaxOutstandingR2T-negotiation.patch
-
-Patch177: open-iscsi-2.0.874-30-iscsiuio-fix-dhcpv6-transaction-id-mismatch-error.patch
-Patch178: open-iscsi-2.0.874-31-iscsiuio-serialize-xmit_mutex-lock-to-prevent-iscsiuio-seg-fault.patch
-Patch179: open-iscsi-2.0.874-32-iscsiuio-allow-ARP-for-non-matching-src-and-dst-addresses.patch
-Patch180: open-iscsi-2.0.874-33-iscsiuio-v0.7.8.4.patch
-Patch181: open-iscsi-2.0.876-3-qedi.c-Removed-unused-linux-ethtool.h.patch
-Patch182: open-iscsi-2.0.876-31-Fix-iscsiuio-segfault-when-shutting-down.patch
-Patch183: open-iscsi-2.0.876-54-iscsiuio-Add-inter-host-mutex-while-doing-xmit.patch
-Patch184: 0184-set-iscsid.safe_logout-to-Yes-by-default.patch
-
-Patch195: open-iscsi-2.0.874-35-iscsiuio-fix-long-options.patch
-Patch196: open-iscsi-2.0.874-38-Update-bnx2.c.patch
-Patch197: open-iscsi-2.0.874-39-Update-bnx2x.c.patch
-Patch198: open-iscsi-2.0.875-7-Ignore-library-file-for-iscsiuio-src.patch
-Patch199: open-iscsi-2.0.875-9-Remove-unused-variables.-No-functional-change.patch
-Patch200: open-iscsi-2.0.875-10-Include-sys-sysmacros.h-to-properly-define-minor.patch
-Patch201: open-iscsi-2.0.875-11-Declare-inline-best_match_bufcmp-as-static.patch
-Patch202: open-iscsi-2.0.875-14-Check-for-root-peer-user-for-iscsiuio-IPC.patch
-Patch203: open-iscsi-2.0.875-15-iscsiuio-should-ignore-bogus-iscsid-broadcast-packets.patch
-Patch204: open-iscsi-2.0.875-16-Ensure-all-fields-in-iscsiuio-IPC-response-are-set.patch
-Patch205: open-iscsi-2.0.875-17-Do-not-double-close-IPC-file-stream-to-iscsid.patch
-Patch206: open-iscsi-2.0.875-18-Ensure-strings-from-peer-are-copied-correctly.patch
-Patch207: open-iscsi-2.0.875-19-Skip-useless-strcopy-and-validate-CIDR-length.patch
-Patch208: open-iscsi-2.0.875-20-Check-iscsiuio-ping-data-length-for-validity.patch
-Patch209: open-iscsi-2.0.875-21-tell-git-to-ignore-the-iscsiuio-binary.patch
-Patch210: open-iscsi-2.0.875-30-Cleanup-iscsiuio-master-Makefile-template.patch
-Patch211: open-iscsi-2.0.876-5-bnx2x.c-Reorder-the-includes-to-avoid-duplicate-defines-with-musl.patch
-Patch212: open-iscsi-2.0.876-6-Use-correct-size-when-copying-nic-name.patch
-Patch213: open-iscsi-2.0.876-56-iscsiuio-Release-xmit_mutex-in-error-code-path.patch
-Patch214: open-iscsi-2.0.876-57-iscsiuio-limit-retries-of-performing-dhcpv6-before-declaring-dhcp-failure.patch
-Patch215: open-iscsi-2.0.876-58-iscsiuio-Do-not-flush-tx-queue-on-each-uio-interrupt.patch
-Patch216: open-iscsi-2.0.876-59-qedi-Set-buf_size-in-case-of-ICMP-and-ARP-packet.patch
-Patch217: open-iscsi-2.0.876-60-qedi-Use-uio-BD-index-instead-on-buffer-index.patch
-Patch218: open-iscsi-2.0.876-61-iscsiuio-v0.7.8.5.patch
-Patch219: open-iscsi-2.0.876-66-Close-file-handles-when-writing-pid-files.patch
-Patch220: open-iscsi-2.0.876-66-iscsiuio-avoid-loosing-bad-rc-in-nic_nl_open.patch
-Patch221: open-iscsi-2.0.876-67-iscsiuio-fail-on-nic_nl_open-failing.patch
-
 # upstream removed internal open-isns, but not taking that here just yet
 # it requires repackaging isns-utils to provide a debug package
-Patch300: keep-open-isns.patch
+Patch198: keep-open-isns.patch
 # version string, needs to be updated with each build
-Patch400: 0199-use-Red-Hat-version-string-to-match-RPM-package-vers.patch
+Patch199: 0199-use-Red-Hat-version-string-to-match-RPM-package-vers.patch
 
 BuildRequires: flex bison python-devel doxygen kmod-devel systemd-devel libmount-devel autoconf automake libtool
 # For dir ownership
@@ -220,7 +180,6 @@ if [ $1 -eq 1 ]; then
 	# enable socket activation and persistant session startup by default
 	/bin/systemctl enable iscsi.service >/dev/null 2>&1 || :
 	/bin/systemctl enable iscsid.socket >/dev/null 2>&1 || :
-	/bin/systemctl start iscsid.socket >/dev/null 2>&1 || :
 fi
 
 %post iscsiuio
@@ -228,7 +187,6 @@ fi
 
 if [ $1 -eq 1 ]; then
 	/bin/systemctl enable iscsiuio.socket >/dev/null 2>&1 || :
-	/bin/systemctl start iscsiuio.socket >/dev/null 2>&1 || :
 fi
 
 %preun
@@ -313,29 +271,6 @@ fi
 %{_includedir}/libiscsi.h
 
 %changelog
-* Wed Mar 06 2019 Chris Leech <cleech@redhat.com> - 6.2.0.874-12
-- 1649401, 1649413 iscsiuio updates
-
-* Wed Aug 29 2018 Chris Leech <cleech@redhat.com> - 6.2.0.874-10
-- 1185734 set iscsid.safe_logout to Yes by default
-
-* Fri Jun 22 2018 Chris Leech <cleech@redhat.com> - 6.2.0.874-9
-- 1578984 update iscsiuio to v0.7.8.4
-
-* Fri Jun 22 2018 Chris Leech <cleech@redhat.com> - 6.2.0.874-8
-- 1278438 enable MaxOutstandingR2T negotiation during login
-
-* Thu Nov 30 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-7
-- 1328694 keep vlan settings in sync for ipv4/ipv6 iface records with be2iscsi
-
-* Wed Nov 01 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-6
-- 1507945 force start iscsiuio for boot session recovery with qedi
-- 1457359 start systemd socket listeners, otherwise if iscsid is started
-  directly iscsiuio doesn't activate as expected
-
-* Tue Aug 15 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-5
-- 1431622 fix default in iscsi-iname manpage to match Red Hat customization
-
 * Tue Jun 27 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-4
 - 1450756 isolate iscsistart sockets
 

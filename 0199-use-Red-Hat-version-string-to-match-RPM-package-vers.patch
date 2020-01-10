@@ -16,7 +16,7 @@ index 20f07946be1f..baa8c00c7185 100644
   * some other maintainer could merge a patch without going through us
   */
 -#define ISCSI_VERSION_STR	"2.0-874"
-+#define ISCSI_VERSION_STR	"6.2.0.874-10"
++#define ISCSI_VERSION_STR	"6.2.0.874-2"
  #define ISCSI_VERSION_FILE	"/sys/module/scsi_transport_iscsi/version"
  
  #endif
