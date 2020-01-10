@@ -4,7 +4,7 @@
 Summary: iSCSI daemon and utility programs
 Name: iscsi-initiator-utils
 Version: 6.%{open_iscsi_version}.%{open_iscsi_build}
-Release: 4%{?dist}
+Release: 7%{?dist}
 Group: System Environment/Daemons
 License: GPLv2+
 URL: http://www.open-iscsi.org
@@ -48,6 +48,7 @@ Patch168: 0168-update-handling-of-boot-sessions.patch
 Patch169: 0169-update-iscsi.service-for-boot-session-recovery.patch
 Patch170: 0170-fix-systemd-unit-wants.patch
 Patch172: 0172-move-cleanup-to-seperate-service.patch
+Patch175: be2iscsi-vlan.patch
 # upstream removed internal open-isns, but not taking that here just yet
 # it requires repackaging isns-utils to provide a debug package
 Patch198: keep-open-isns.patch
@@ -180,6 +181,7 @@ if [ $1 -eq 1 ]; then
 	# enable socket activation and persistant session startup by default
 	/bin/systemctl enable iscsi.service >/dev/null 2>&1 || :
 	/bin/systemctl enable iscsid.socket >/dev/null 2>&1 || :
+	/bin/systemctl start iscsid.socket >/dev/null 2>&1 || :
 fi
 
 %post iscsiuio
@@ -187,6 +189,7 @@ fi
 
 if [ $1 -eq 1 ]; then
 	/bin/systemctl enable iscsiuio.socket >/dev/null 2>&1 || :
+	/bin/systemctl start iscsiuio.socket >/dev/null 2>&1 || :
 fi
 
 %preun
@@ -271,6 +274,17 @@ fi
 %{_includedir}/libiscsi.h
 
 %changelog
+* Thu Nov 30 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-7
+- 1328694 keep vlan settings in sync for ipv4/ipv6 iface records with be2iscsi
+
+* Wed Nov 01 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-6
+- 1507945 force start iscsiuio for boot session recovery with qedi
+- 1457359 start systemd socket listeners, otherwise if iscsid is started
+  directly iscsiuio doesn't activate as expected
+
+* Tue Aug 15 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-5
+- 1431622 fix default in iscsi-iname manpage to match Red Hat customization
+
 * Tue Jun 27 2017 Chris Leech <cleech@redhat.com> - 6.2.0.874-4
 - 1450756 isolate iscsistart sockets
 
