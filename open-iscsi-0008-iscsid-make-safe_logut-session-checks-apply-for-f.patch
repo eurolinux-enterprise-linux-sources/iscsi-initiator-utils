@@ -1,0 +1,573 @@
+From 723e7b342ec311a59f92eb94936ce769e804b43d Mon Sep 17 00:00:00 2001
+From: Chris Leech <cleech@redhat.com>
+Date: Fri, 24 Jul 2015 14:18:30 -0700
+Subject: [PATCH v2 8/9] iscsid: make safe_logut session checks apply for
+ flashnode session
+
+Make the safe_logout option work with flashnode sessions as well.
+Moves the code into a new file shared between iscsid and iscsiadm.
+---
+ usr/Makefile           |   8 +-
+ usr/initiator.c        | 195 -----------------------------------------
+ usr/initiator.h        |   1 +
+ usr/initiator_common.c |   2 +
+ usr/iscsiadm.c         |  23 +++++
+ usr/iscsistart.c       |   2 +
+ usr/mntcheck.c         | 233 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 7 files changed, 265 insertions(+), 199 deletions(-)
+ create mode 100644 usr/mntcheck.c
+
+diff --git a/usr/Makefile b/usr/Makefile
+index 277ac6a..c1866b6 100644
+--- a/usr/Makefile
++++ b/usr/Makefile
+@@ -53,15 +53,15 @@ DISCOVERY_SRCS = $(FW_BOOT_SRCS) strings.o discovery.o
+ all: $(PROGRAMS)
+ 
+ iscsid: $(ISCSI_LIB_SRCS) $(INITIATOR_SRCS) $(DISCOVERY_SRCS) \
+-	iscsid.o session_mgmt.o discoveryd.o
++	iscsid.o session_mgmt.o discoveryd.o mntcheck.o
+ 	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@  -lisns -lcrypto -lrt -lmount
+ 
+-iscsiadm: $(ISCSI_LIB_SRCS) $(DISCOVERY_SRCS) iscsiadm.o session_mgmt.o
+-	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -lisns -lcrypto
++iscsiadm: $(ISCSI_LIB_SRCS) $(DISCOVERY_SRCS) iscsiadm.o session_mgmt.o mntcheck.o
++	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -lisns -lcrypto -lmount
+ 
+ iscsistart: $(ISCSI_LIB_SRCS) $(INITIATOR_SRCS) $(FW_BOOT_SRCS) \
+ 		iscsistart.o statics.o
+-	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -lrt -lmount
++	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@ -lrt
+ clean:
+ 	rm -f *.o $(PROGRAMS) .depend $(LIBSYS)
+ 
+diff --git a/usr/initiator.c b/usr/initiator.c
+index b0f0147..072bcc9 100644
+--- a/usr/initiator.c
++++ b/usr/initiator.c
+@@ -30,7 +30,6 @@
+ #include <errno.h>
+ #include <dirent.h>
+ #include <fcntl.h>
+-#include <libmount/libmount.h>
+ 
+ #include "initiator.h"
+ #include "transport.h"
+@@ -2044,200 +2043,6 @@ static int session_unbind(struct iscsi_session *session)
+ 	return err;
+ }
+ 
+-static struct libmnt_table *mtab, *swaps;
+-static struct libmnt_cache *mntcache;
+-
+-static void libmount_cleanup(void)
+-{
+-	mnt_free_table(mtab);
+-	mnt_free_table(swaps);
+-	mnt_free_cache(mntcache);
+-	mtab = swaps = mntcache = NULL;
+-}
+-
+-static int libmount_init(void)
+-{
+-	mnt_init_debug(0);
+-	mtab = mnt_new_table();
+-	swaps = mnt_new_table();
+-	mntcache = mnt_new_cache();
+-	if (!mtab || !swaps || !mntcache) {
+-		libmount_cleanup();
+-		return -ENOMEM;
+-	}
+-	mnt_table_set_cache(mtab, mntcache);
+-	mnt_table_set_cache(swaps, mntcache);
+-	mnt_table_parse_mtab(mtab, NULL);
+-	mnt_table_parse_swaps(swaps, NULL);
+-	return 0;
+-}
+-
+-static int trans_filter(const struct dirent *d)
+-{
+-	if (!strcmp(".", d->d_name) || !strcmp("..", d->d_name))
+-		return 0;
+-	return 1;
+-}
+-
+-static int subdir_filter(const struct dirent *d)
+-{
+-	if (!(d->d_type & DT_DIR))
+-		return 0;
+-	return trans_filter(d);
+-}
+-
+-static int is_partition(const char *path)
+-{
+-	char *devtype;
+-	int rc = 0;
+-
+-	devtype = sysfs_get_uevent_devtype(path);
+-	if (!devtype)
+-		return 0;
+-	if (strcmp(devtype, "partition") == 0)
+-		rc = 1;
+-	free(devtype);
+-	return rc;
+-}
+-
+-static int blockdev_check_mnts(char *syspath)
+-{
+-	struct libmnt_fs *fs;
+-	char *devname = NULL;
+-	char *_devname = NULL;
+-	int rc = 0;
+-
+-	devname = sysfs_get_uevent_devname(syspath);
+-	if (!devname)
+-		goto out;
+-
+-	_devname = calloc(1, PATH_MAX);
+-	if (!_devname)
+-		goto out;
+-	snprintf(_devname, PATH_MAX, "/dev/%s", devname);
+-
+-	fs = mnt_table_find_source(mtab, _devname, MNT_ITER_FORWARD);
+-	if (fs) {
+-		rc = 1;
+-		goto out;
+-	}
+-	fs = mnt_table_find_source(swaps, _devname, MNT_ITER_FORWARD);
+-	if (fs)
+-		rc = 1;
+-out:
+-	free(devname);
+-	free(_devname);
+-	return rc;
+-}
+-
+-static int count_device_users(char *syspath);
+-
+-static int blockdev_get_partitions(char *syspath)
+-{
+-	struct dirent **parts = NULL;
+-	int n, i;
+-	int count = 0;
+-
+-	n = scandir(syspath, &parts, subdir_filter, alphasort);
+-	for (i = 0; i < n; i++) {
+-		char *newpath;
+-
+-		newpath = calloc(1, PATH_MAX);
+-		if (!newpath)
+-			continue;
+-		snprintf(newpath, PATH_MAX, "%s/%s", syspath, parts[i]->d_name);
+-		free(parts[i]);
+-		if (is_partition(newpath)) {
+-			count += count_device_users(newpath);
+-		}
+-		free(newpath);
+-	}
+-	free(parts);
+-	return count;
+-}
+-
+-static int blockdev_get_holders(char *syspath)
+-{
+-	char *path = NULL;
+-	struct dirent **holds = NULL;
+-	int n, i;
+-	int count = 0;
+-
+-	path = calloc(1, PATH_MAX);
+-	if (!path)
+-		return 0;
+-	snprintf(path, PATH_MAX, "%s/holders", syspath);
+-
+-	n = scandir(path, &holds, trans_filter, alphasort);
+-	for (i = 0; i < n; i++) {
+-		char *newpath;
+-		char *rp;
+-
+-		newpath = calloc(1, PATH_MAX);
+-		if (!newpath)
+-			continue;
+-		snprintf(newpath, PATH_MAX, "%s/%s", path, holds[i]->d_name);
+-
+-		free(holds[i]);
+-		rp = realpath(newpath, NULL);
+-		if (rp)
+-			count += count_device_users(rp);
+-		free(newpath);
+-		free(rp);
+-	}
+-	free(path);
+-	free(holds);
+-	return count;
+-}
+-
+-static int count_device_users(char *syspath)
+-{
+-	int count = 0;
+-	count += blockdev_check_mnts(syspath);
+-	count += blockdev_get_partitions(syspath);
+-	count += blockdev_get_holders(syspath);
+-	return count;
+-};
+-
+-static void device_in_use(void *data, int host_no, int target, int lun)
+-{
+-	char *syspath = NULL;
+-	char *devname = NULL;
+-	int *count = data;
+-
+-	devname = iscsi_sysfs_get_blockdev_from_lun(host_no, target, lun);
+-	if (!devname)
+-		goto out;
+-	syspath = calloc(1, PATH_MAX);
+-	if (!syspath)
+-		goto out;
+-	snprintf(syspath, PATH_MAX, "/sys/class/block/%s", devname);
+-	*count += count_device_users(syspath);
+-out:
+-	free(syspath);
+-	free(devname);
+-}
+-
+-static int session_in_use(int sid)
+-{
+-	int host_no = -1, err = 0;
+-	int count = 0;
+-
+-	if (libmount_init()) {
+-		log_error("Failed to initialize libmount, "
+-			  "not checking for active mounts on session [%d].",
+-			  sid);
+-		return 0;
+-	}
+-
+-	host_no = iscsi_sysfs_get_host_no_from_sid(sid, &err);
+-	if (!err)
+-		iscsi_sysfs_for_each_device(&count, host_no, sid, device_in_use);
+-
+-	libmount_cleanup();
+-	return count;
+-}
+-
+ int session_logout_task(int sid, queue_task_t *qtask)
+ {
+ 	iscsi_session_t *session;
+diff --git a/usr/initiator.h b/usr/initiator.h
+index c11d77f..4f96d6b 100644
+--- a/usr/initiator.h
++++ b/usr/initiator.h
+@@ -359,4 +359,5 @@ extern int iscsi_set_net_config(struct iscsi_transport *t,
+ 				struct iface_rec *iface);
+ extern void iscsi_session_init_params(struct iscsi_session *session);
+ 
++extern int session_in_use(int sid);
+ #endif /* INITIATOR_H */
+diff --git a/usr/initiator_common.c b/usr/initiator_common.c
+index c02643a..1d1d822 100644
+--- a/usr/initiator_common.c
++++ b/usr/initiator_common.c
+@@ -23,6 +23,8 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <errno.h>
++#include <dirent.h>
++#include <libmount/libmount.h>
+ 
+ #include "initiator.h"
+ #include "transport.h"
+diff --git a/usr/iscsiadm.c b/usr/iscsiadm.c
+index c6705bd..fc0c8bc 100644
+--- a/usr/iscsiadm.c
++++ b/usr/iscsiadm.c
+@@ -1898,11 +1898,34 @@ exit_logout:
+ 	return rc;
+ }
+ 
++static int iscsi_check_session_use_count(uint32_t sid) {
++	char *config_file;
++	char *safe_logout;
++
++	config_file = get_config_file();
++	if (!config_file) {
++		log_error("Could not get config file from iscsid");
++		return 0;
++	}
++
++	safe_logout = cfg_get_string_param(config_file, "iscsid.safe_logout");
++	if (!safe_logout || strcmp(safe_logout, "Yes"))
++		return 0;
++
++	return session_in_use(sid);
++}
++
+ int iscsi_logout_flashnode_sid(struct iscsi_transport *t, uint32_t host_no,
+ 			       uint32_t sid)
+ {
+ 	int fd, rc = 0;
+ 
++	if (iscsi_check_session_use_count(sid)) {
++		log_error("Session is actively in use for mounted storage, "
++			  "and iscsid.safe_logout is configured.");
++		return ISCSI_ERR_BUSY;
++	}
++
+ 	fd = ipc->ctldev_open();
+ 	if (fd < 0) {
+ 		log_error("Netlink open failed.");
+diff --git a/usr/iscsistart.c b/usr/iscsistart.c
+index 7ff2236..79d6622 100644
+--- a/usr/iscsistart.c
++++ b/usr/iscsistart.c
+@@ -279,6 +279,8 @@ static int setup_session(void)
+ 	return rc;
+ }
+ 
++int session_in_use(int sid) { return 0; }
++
+ static void catch_signal(int signo)
+ {
+ 	log_warning("pid %d caught signal -%d", getpid(), signo);
+diff --git a/usr/mntcheck.c b/usr/mntcheck.c
+new file mode 100644
+index 0000000..6ae03e0
+--- /dev/null
++++ b/usr/mntcheck.c
+@@ -0,0 +1,233 @@
++/*
++ * Common code for checking sessions for mnt use
++ *
++ * Copyright (C) 2014 - 2015 Chris Leech
++ * Copyright (C) 2014 - 2015 Red Hat, Inc. All rights reserved.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published
++ * by the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++ * General Public License for more details.
++ *
++ * See the file COPYING included with this distribution for more details.
++ */
++
++#include <string.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <errno.h>
++#include <dirent.h>
++#include <libmount/libmount.h>
++
++#include "initiator.h"
++#include "transport.h"
++#include "iscsid.h"
++#include "iscsi_ipc.h"
++#include "log.h"
++#include "iscsi_sysfs.h"
++#include "iscsi_settings.h"
++#include "iface.h"
++#include "host.h"
++#include "sysdeps.h"
++#include "iscsi_err.h"
++#include "iscsi_net_util.h"
++
++static struct libmnt_table *mtab, *swaps;
++static struct libmnt_cache *mntcache;
++
++static void libmount_cleanup(void)
++{
++	mnt_free_table(mtab);
++	mnt_free_table(swaps);
++	mnt_free_cache(mntcache);
++	mtab = NULL;
++	swaps = NULL;
++	mntcache = NULL;
++}
++
++static int libmount_init(void)
++{
++	mnt_init_debug(0);
++	mtab = mnt_new_table();
++	swaps = mnt_new_table();
++	mntcache = mnt_new_cache();
++	if (!mtab || !swaps || !mntcache) {
++		libmount_cleanup();
++		return -ENOMEM;
++	}
++	mnt_table_set_cache(mtab, mntcache);
++	mnt_table_set_cache(swaps, mntcache);
++	mnt_table_parse_mtab(mtab, NULL);
++	mnt_table_parse_swaps(swaps, NULL);
++	return 0;
++}
++
++static int trans_filter(const struct dirent *d)
++{
++	if (!strcmp(".", d->d_name) || !strcmp("..", d->d_name))
++		return 0;
++	return 1;
++}
++
++static int subdir_filter(const struct dirent *d)
++{
++	if (!(d->d_type & DT_DIR))
++		return 0;
++	return trans_filter(d);
++}
++
++static int is_partition(const char *path)
++{
++	char *devtype;
++	int rc = 0;
++
++	devtype = sysfs_get_uevent_devtype(path);
++	if (!devtype)
++		return 0;
++	if (strcmp(devtype, "partition") == 0)
++		rc = 1;
++	free(devtype);
++	return rc;
++}
++
++static int blockdev_check_mnts(char *syspath)
++{
++	struct libmnt_fs *fs;
++	char *devname = NULL;
++	char *_devname = NULL;
++	int rc = 0;
++
++	devname = sysfs_get_uevent_devname(syspath);
++	if (!devname)
++		goto out;
++
++	_devname = calloc(1, PATH_MAX);
++	if (!_devname)
++		goto out;
++	snprintf(_devname, PATH_MAX, "/dev/%s", devname);
++
++	fs = mnt_table_find_source(mtab, _devname, MNT_ITER_FORWARD);
++	if (fs) {
++		rc = 1;
++		goto out;
++	}
++	fs = mnt_table_find_source(swaps, _devname, MNT_ITER_FORWARD);
++	if (fs)
++		rc = 1;
++out:
++	free(devname);
++	free(_devname);
++	return rc;
++}
++
++static int count_device_users(char *syspath);
++
++static int blockdev_get_partitions(char *syspath)
++{
++	struct dirent **parts = NULL;
++	int n, i;
++	int count = 0;
++
++	n = scandir(syspath, &parts, subdir_filter, alphasort);
++	for (i = 0; i < n; i++) {
++		char *newpath;
++
++		newpath = calloc(1, PATH_MAX);
++		if (!newpath)
++			continue;
++		snprintf(newpath, PATH_MAX, "%s/%s", syspath, parts[i]->d_name);
++		free(parts[i]);
++		if (is_partition(newpath)) {
++			count += count_device_users(newpath);
++		}
++		free(newpath);
++	}
++	free(parts);
++	return count;
++}
++
++static int blockdev_get_holders(char *syspath)
++{
++	char *path = NULL;
++	struct dirent **holds = NULL;
++	int n, i;
++	int count = 0;
++
++	path = calloc(1, PATH_MAX);
++	if (!path)
++		return 0;
++	snprintf(path, PATH_MAX, "%s/holders", syspath);
++
++	n = scandir(path, &holds, trans_filter, alphasort);
++	for (i = 0; i < n; i++) {
++		char *newpath;
++		char *rp;
++
++		newpath = calloc(1, PATH_MAX);
++		if (!newpath)
++			continue;
++		snprintf(newpath, PATH_MAX, "%s/%s", path, holds[i]->d_name);
++
++		free(holds[i]);
++		rp = realpath(newpath, NULL);
++		if (rp)
++			count += count_device_users(rp);
++		free(newpath);
++		free(rp);
++	}
++	free(path);
++	free(holds);
++	return count;
++}
++
++static int count_device_users(char *syspath)
++{
++	int count = 0;
++	count += blockdev_check_mnts(syspath);
++	count += blockdev_get_partitions(syspath);
++	count += blockdev_get_holders(syspath);
++	return count;
++};
++
++static void device_in_use(void *data, int host_no, int target, int lun)
++{
++	char *syspath = NULL;
++	char *devname = NULL;
++	int *count = data;
++
++	devname = iscsi_sysfs_get_blockdev_from_lun(host_no, target, lun);
++	if (!devname)
++		goto out;
++	syspath = calloc(1, PATH_MAX);
++	if (!syspath)
++		goto out;
++	snprintf(syspath, PATH_MAX, "/sys/class/block/%s", devname);
++	*count += count_device_users(syspath);
++out:
++	free(syspath);
++	free(devname);
++}
++
++int session_in_use(int sid)
++{
++	int host_no = -1, err = 0;
++	int count = 0;
++
++	if (libmount_init()) {
++		log_error("Failed to initialize libmount, "
++			  "not checking for active mounts on session [%d].", sid);
++		return 0;
++	}
++
++	host_no = iscsi_sysfs_get_host_no_from_sid(sid, &err);
++	if (!err)
++		iscsi_sysfs_for_each_device(&count, host_no, sid, device_in_use);
++
++	libmount_cleanup();
++	return count;
++}
+-- 
+2.5.5
+
