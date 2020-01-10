@@ -1,0 +1,38 @@
+From fea8d2e506a40f80f9062aa9c98f403518782f27 Mon Sep 17 00:00:00 2001
+From: Edward Kigwana <ekigwana@users.noreply.github.com>
+Date: Fri, 11 Aug 2017 21:51:52 +0000
+Subject: [PATCH] Update bnx2x.c
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Release notes for glibc-2.25 state:
+
+The inclusion of <sys/sysmacros.h> by <sys/types.h> is deprecated.
+This means that in a future release, the macros “major”, “minor”, and
+“makedev” will only be available from <sys/sysmacros.h>.
+
+These macros are not part of POSIX nor XSI, and their names frequently
+collide with user code; see for instance glibc bug 19239 and Red Hat
+bug 130601. <stdlib.h> includes <sys/types.h> under _GNU_SOURCE, and
+C++ code presently cannot avoid being compiled under _GNU_SOURCE,
+exacerbating the problem.
+---
+ iscsiuio/src/unix/libs/bnx2x.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/iscsiuio/src/unix/libs/bnx2x.c b/iscsiuio/src/unix/libs/bnx2x.c
+index 1e8f532edcdf..3df6d5fdbfa2 100644
+--- a/iscsiuio/src/unix/libs/bnx2x.c
++++ b/iscsiuio/src/unix/libs/bnx2x.c
+@@ -45,6 +45,7 @@
+ #include <linux/ethtool.h>
+ #include <sys/mman.h>
+ #include <sys/ioctl.h>
++#include <sys/sysmacros.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include <sys/user.h>
+-- 
+2.17.2
+

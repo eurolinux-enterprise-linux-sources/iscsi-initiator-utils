@@ -1,0 +1,82 @@
+From 06851794fe0475410f516e874ee0c67db4a6784a Mon Sep 17 00:00:00 2001
+From: Andrew Patterson <andrew.patterson@hpe.com>
+Date: Wed, 31 May 2017 10:30:21 -0600
+Subject: [PATCH] iscsiuio: fix long options
+
+Fix broken long command-line options in iscsiuio.
+---
+ iscsiuio/docs/iscsiuio.8 | 10 +++++-----
+ iscsiuio/src/unix/main.c | 12 +++++++-----
+ 2 files changed, 12 insertions(+), 10 deletions(-)
+
+diff --git a/iscsiuio/docs/iscsiuio.8 b/iscsiuio/docs/iscsiuio.8
+index 8b0577a53842..eda20c76637f 100644
+--- a/iscsiuio/docs/iscsiuio.8
++++ b/iscsiuio/docs/iscsiuio.8
+@@ -45,7 +45,7 @@ on how to configure network protocol and address.
+ .SH PARAMETERS
+ There are very few parameters when running this application.
+ .TP
+-.BI -d <debug level>
++.BI -d|--debug <debug level>
+ This is to enable debug mode where debug messages will be sent to stdout
+ The following debug modes are supported
+ .P
+@@ -61,20 +61,20 @@ ERROR         1 - Only print critical errors
+ .PP
+ .TP
+ .TP
+-.BI -f
++.BI -f|--foreground
+ This is to enable foreground mode so that this application doesn't get sent
+ into the background.
+ .PP
+ .TP
+-.BI -v
++.BI -v|--version
+ This is to print the version.
+ .PP
+ .TP
+-.BI -p <pidfile>
++.BI -p|--pid <pidfile>
+ Use pidfile (default  /var/run/iscsiuio.pid )
+ .PP
+ .TP
+-.BI -h
++.BI -h|--help
+ Display this help and exit.
+ 
+ 
+diff --git a/iscsiuio/src/unix/main.c b/iscsiuio/src/unix/main.c
+index c1a72d800741..5cccc76ed220 100644
+--- a/iscsiuio/src/unix/main.c
++++ b/iscsiuio/src/unix/main.c
+@@ -82,10 +82,12 @@ static const char default_pid_filepath[] = "/var/run/iscsiuio.pid";
+  *  Global Variables
+  ******************************************************************************/
+ static const struct option long_options[] = {
+-	{"debug", 0, 0, 0},
+-	{"version", 0, 0, 0},
+-	{"help", 0, 0, 0},
+-	{0, 0, 0, 0}
++	{"foreground", no_argument, NULL, 'f'},
++	{"debug", required_argument, NULL, 'd'},
++	{"pid", required_argument, NULL, 'p'},
++	{"version", no_argument, NULL, 'v'},
++	{"help", no_argument, NULL, 'h'},
++	{NULL, no_argument, NULL, 0}
+ };
+ 
+ struct options opt = {
+@@ -172,7 +174,7 @@ static void main_usage()
+ 	printf("iscsiuio daemon.\n"
+ 	       "-f, --foreground        make the program run in the foreground\n"
+ 	       "-d, --debug debuglevel  print debugging information\n"
+-	       "-p, --pid=pidfile       use pid file (default  %s).\n"
++	       "-p, --pid pidfile       use pid file (default  %s).\n"
+ 	       "-h, --help              display this help and exit\n"
+ 	       "-v, --version           display version and exit\n",
+ 	       default_pid_filepath);
+-- 
+2.17.2
+

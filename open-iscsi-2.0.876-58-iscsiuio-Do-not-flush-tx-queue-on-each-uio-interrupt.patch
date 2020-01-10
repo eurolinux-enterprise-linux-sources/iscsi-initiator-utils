@@ -1,0 +1,37 @@
+From caae91b5ef27124caf9adc1b46b40a3491f49bee Mon Sep 17 00:00:00 2001
+From: Manish Rangankar <manish.rangankar@cavium.com>
+Date: Wed, 24 Oct 2018 07:22:05 -0400
+Subject: [PATCH] iscsiuio: Do not flush tx queue on each uio interrupt.
+
+Unlike bnx2x, qedi start_xmit netlink provide us guarantee
+of transmitting LL2 packet, so there is no need to call clear_tx_intr for
+each LL2 packet. This help us in reducing iscsiuio lock contention.
+
+Signed-off-by: Manish Rangankar <manish.rangankar@cavium.com>
+---
+ iscsiuio/src/unix/nic.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/iscsiuio/src/unix/nic.c b/iscsiuio/src/unix/nic.c
+index dfc2ad0a7a7b..29c4332a3162 100644
+--- a/iscsiuio/src/unix/nic.c
++++ b/iscsiuio/src/unix/nic.c
+@@ -799,9 +799,12 @@ int nic_process_intr(nic_t *nic, int discard_check)
+ 
+ 		nic->intr_count = count;
+ 
+-		LOG_DEBUG(PFX "%s: host:%d - calling clear_tx_intr from process_intr",
+-			   nic->log_name, nic->host_no);
+-		(*nic->ops->clear_tx_intr) (nic);
++		if (strcmp(nic->ops->description, "qedi")) {
++			LOG_DEBUG(PFX "%s: host:%d - calling clear_tx_intr from process_intr",
++			          nic->log_name, nic->host_no);
++			(*nic->ops->clear_tx_intr) (nic);
++		}
++
+ 		ret = 1;
+ 	}
+ 	pthread_mutex_unlock(&nic->nic_mutex);
+-- 
+2.17.2
+

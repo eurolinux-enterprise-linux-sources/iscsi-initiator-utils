@@ -1,0 +1,20 @@
+From 204f588d8be50354ab4a3f3ace671d27d11f347d Mon Sep 17 00:00:00 2001
+From: Lee Duncan <lduncan@suse.com>
+Date: Sat, 2 Dec 2017 14:01:34 -0800
+Subject: [PATCH] Ignore library file for iscsiuio/src
+
+---
+ iscsiuio/src/.gitignore | 1 +
+ 1 file changed, 1 insertion(+)
+ create mode 100644 iscsiuio/src/.gitignore
+
+diff --git a/iscsiuio/src/.gitignore b/iscsiuio/src/.gitignore
+new file mode 100644
+index 000000000000..10301e28bf0f
+--- /dev/null
++++ b/iscsiuio/src/.gitignore
+@@ -0,0 +1 @@
++*.a
+-- 
+2.17.2
+
